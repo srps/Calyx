@@ -54,6 +54,7 @@ struct MainContentView: View {
                     }
 
                     TerminalContainerView(splitContainerView: splitContainerView)
+                        .opacity(0.85)
                 }
             }
         }

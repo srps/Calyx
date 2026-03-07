@@ -70,7 +70,7 @@ private struct SidebarBackgroundModifier: ViewModifier {
         if reduceTransparency {
             content.background(Color(nsColor: .controlBackgroundColor))
         } else {
-            content.glassEffect(.regular)
+            content.glassEffect(.regular, in: .rect)
         }
     }
 }
