@@ -70,6 +70,8 @@ class CommandPaletteView: NSView, NSTableViewDelegate, NSTableViewDataSource, NS
         resultsTableView.backgroundColor = .clear
         resultsTableView.delegate = self
         resultsTableView.dataSource = self
+        resultsTableView.target = self
+        resultsTableView.action = #selector(tableViewClicked(_:))
 
         // Scroll view
         resultsScrollView.documentView = resultsTableView
@@ -186,6 +188,12 @@ class CommandPaletteView: NSView, NSTableViewDelegate, NSTableViewDataSource, NS
         let row = resultsTableView.selectedRow
         guard row >= 0 else { return }
         selectedIndex = row
+    }
+
+    @objc private func tableViewClicked(_ sender: Any?) {
+        guard resultsTableView.clickedRow >= 0 else { return }
+        selectedIndex = resultsTableView.clickedRow
+        executeSelected()
     }
 
     // MARK: - NSTextFieldDelegate
