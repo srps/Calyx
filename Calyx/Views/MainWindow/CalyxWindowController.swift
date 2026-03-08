@@ -454,21 +454,53 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func restoreFocus() {
-        activeTab?.unreadNotifications = 0
         focusRequestID &+= 1
         let requestID = focusRequestID
+        let startTime = CACurrentMediaTime()
 
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            guard requestID == self.focusRequestID else { return }
-            guard let tab = self.activeTab,
-                  let focusedID = tab.splitTree.focusedLeafID,
-                  let focusView = tab.registry.view(for: focusedID) else { return }
+            self?.attemptFocusRestore(requestID: requestID, startTime: startTime)
+        }
+    }
 
-            if self.window?.makeFirstResponder(focusView) != true {
-                self.splitContainerView?.layoutSubtreeIfNeeded()
-                self.window?.makeFirstResponder(focusView)
+    private static let focusRestoreTimeout: Double = 0.5
+
+    private func attemptFocusRestore(requestID: UInt64, startTime: Double) {
+        guard requestID == focusRequestID else { return }
+
+        // Non-key window → skip; windowDidBecomeKey will call restoreFocus()
+        guard window?.isKeyWindow == true else { return }
+
+        guard let tab = activeTab,
+              let focusedID = tab.splitTree.focusedLeafID,
+              let focusView = tab.registry.view(for: focusedID) else {
+            logger.debug("Focus restore: no focused leaf (request \(requestID))")
+            return
+        }
+
+        // View must be attached to THIS window's hierarchy
+        guard focusView.window === self.window, focusView.superview != nil else {
+            let elapsed = CACurrentMediaTime() - startTime
+            guard elapsed < Self.focusRestoreTimeout else {
+                logger.warning("Focus restore timed out (\(String(format: "%.0f", elapsed * 1000))ms, leaf \(focusedID))")
+                // Fallback: register one-shot layout callback
+                splitContainerView?.onDeferredLayoutComplete = { [weak self] in
+                    guard let self, requestID == self.focusRequestID else { return }
+                    self.attemptFocusRestore(requestID: requestID, startTime: CACurrentMediaTime())
+                }
+                return
             }
+            // Retry with 10ms backoff
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
+                self?.attemptFocusRestore(requestID: requestID, startTime: startTime)
+            }
+            return
+        }
+
+        if window?.makeFirstResponder(focusView) == true {
+            activeTab?.unreadNotifications = 0
+        } else {
+            logger.debug("Focus restore: makeFirstResponder failed (leaf \(focusedID), attempt at \(String(format: "%.0f", (CACurrentMediaTime() - startTime) * 1000))ms)")
         }
     }
 
@@ -828,8 +860,8 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowDidBecomeKey(_ notification: Notification) {
-        activeTab?.unreadNotifications = 0
         focusedController?.setFocus(true)
+        restoreFocus()
     }
 
     func windowDidResignKey(_ notification: Notification) {

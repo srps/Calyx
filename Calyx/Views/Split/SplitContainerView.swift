@@ -14,6 +14,7 @@ class SplitContainerView: NSView {
     private let registry: SurfaceRegistry
     private var currentTree: SplitTree = SplitTree()
     var onRatioChange: ((UUID, Double, SplitDirection) -> Void)?
+    var onDeferredLayoutComplete: (() -> Void)?
 
     private static let minPaneSize: CGFloat = 50
 
@@ -65,6 +66,9 @@ class SplitContainerView: NSView {
         // Deferred layout: surface views haven't been added yet
         if subviews.isEmpty {
             layoutNode(root, in: bounds)
+            let callback = onDeferredLayoutComplete
+            onDeferredLayoutComplete = nil
+            callback?()
         }
     }
 
