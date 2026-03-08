@@ -454,6 +454,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func restoreFocus() {
+        activeTab?.unreadNotifications = 0
         focusRequestID &+= 1
         let requestID = focusRequestID
 
@@ -502,6 +503,8 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
                            name: .ghosttySetTitle, object: nil)
         center.addObserver(self, selector: #selector(handleSetPwdNotification(_:)),
                            name: .ghosttySetPwd, object: nil)
+        center.addObserver(self, selector: #selector(handleDesktopNotification(_:)),
+                           name: .ghosttyDesktopNotification, object: nil)
     }
 
     // MARK: - Notification Handlers
@@ -695,6 +698,26 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         requestSave()
     }
 
+    @objc private func handleDesktopNotification(_ notification: Notification) {
+        guard let surfaceView = notification.object as? SurfaceView else { return }
+        guard belongsToThisWindow(surfaceView) else { return }
+        guard let title = notification.userInfo?["title"] as? String else { return }
+        let body = notification.userInfo?["body"] as? String ?? ""
+        guard let (owningTab, _) = findTab(for: surfaceView) else { return }
+
+        let isActiveAndVisible = owningTab.id == activeTab?.id && (window?.isKeyWindow ?? false)
+        guard !isActiveAndVisible else { return }
+
+        let isFirstUnread = owningTab.unreadNotifications == 0
+        owningTab.unreadNotifications += 1
+
+        NotificationManager.shared.sendNotification(title: title, body: body, tabID: owningTab.id)
+
+        if isFirstUnread {
+            NotificationManager.shared.bounceDockIcon()
+        }
+    }
+
     // MARK: - Menu Actions
 
     @objc func newTab(_ sender: Any?) {
@@ -805,6 +828,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowDidBecomeKey(_ notification: Notification) {
+        activeTab?.unreadNotifications = 0
         focusedController?.setFocus(true)
     }
 

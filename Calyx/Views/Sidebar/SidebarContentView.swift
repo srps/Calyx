@@ -166,6 +166,13 @@ private struct TabRowItemView: View {
                     .lineLimit(1)
                     .font(.body)
                 Spacer()
+                if tab.unreadNotifications > 0 {
+                    Text(tab.unreadNotifications > 99 ? "99+" : "\(tab.unreadNotifications)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 16, minHeight: 16)
+                        .background(Circle().fill(Color.red))
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 4)

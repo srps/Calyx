@@ -90,6 +90,15 @@ private struct TabItemButton: View {
             }
             .buttonStyle(.plain)
 
+            if tab.unreadNotifications > 0 {
+                Text(tab.unreadNotifications > 99 ? "99+" : "\(tab.unreadNotifications)")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.red))
+            }
+
             Button(action: { onClose?() }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))

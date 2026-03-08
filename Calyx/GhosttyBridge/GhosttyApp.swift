@@ -407,4 +407,5 @@ extension Notification.Name {
     static let ghosttyGotoSplit = Notification.Name("com.calyx.ghostty.gotoSplit")
     static let ghosttyResizeSplit = Notification.Name("com.calyx.ghostty.resizeSplit")
     static let ghosttyEqualizeSplits = Notification.Name("com.calyx.ghostty.equalizeSplits")
+    static let ghosttyDesktopNotification = Notification.Name("com.calyx.ghostty.desktopNotification")
 }

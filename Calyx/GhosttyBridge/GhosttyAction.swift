@@ -200,10 +200,26 @@ enum GhosttyActionRouter {
         target: ghostty_target_s,
         value: ghostty_action_desktop_notification_s
     ) -> Bool {
-        let title = value.title.map { String(cString: $0) } ?? ""
-        let body = value.body.map { String(cString: $0) } ?? ""
-        logger.info("Desktop notification: \(title) - \(body)")
-        // Phase 1: Log only. Full UNUserNotificationCenter integration comes later.
+        guard let surfaceView = surfaceView(from: target) else { return false }
+
+        let title: String
+        if let ptr = value.title {
+            title = String(validatingCString: ptr) ?? ""
+        } else {
+            title = ""
+        }
+        let body: String
+        if let ptr = value.body {
+            body = String(validatingCString: ptr) ?? ""
+        } else {
+            body = ""
+        }
+
+        NotificationCenter.default.post(
+            name: .ghosttyDesktopNotification,
+            object: surfaceView,
+            userInfo: ["title": title, "body": body]
+        )
         return true
     }
 

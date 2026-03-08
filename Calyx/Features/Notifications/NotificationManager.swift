@@ -34,6 +34,7 @@ class NotificationManager {
     }
 
     func sendNotification(title: String, body: String, tabID: UUID) {
+        guard permissionGranted else { return }
         let sanitizedTitle = NotificationSanitizer.sanitize(title)
         let sanitizedBody = NotificationSanitizer.sanitize(body)
 

@@ -17,6 +17,7 @@ class Tab: Identifiable {
     var pwd: String?
     var splitTree: SplitTree
     var content: TabContent
+    var unreadNotifications: Int = 0
     let registry: SurfaceRegistry
 
     init(
