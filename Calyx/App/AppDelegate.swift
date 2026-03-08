@@ -134,6 +134,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         windowControllers.removeAll { $0 === controller }
     }
 
+    func applyCurrentGhosttyConfigToAllWindows() {
+        for controller in windowControllers {
+            controller.applyCurrentGhosttyConfig()
+        }
+    }
+
     // MARK: - Main Menu
 
     private func setupMainMenu() {

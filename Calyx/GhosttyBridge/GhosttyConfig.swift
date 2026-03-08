@@ -63,6 +63,8 @@ final class GhosttyConfigManager {
             return nil
         }
 
+        applyCalyxGlassPresetIfPossible()
+
         // Load configuration from default file locations.
         GhosttyFFI.configLoadDefaultFiles(cfg)
 
@@ -84,6 +86,89 @@ final class GhosttyConfigManager {
         }
 
         return cfg
+    }
+
+    private static func applyCalyxGlassPresetIfPossible() {
+        let ghosttyPath = GhosttyFFI.configOpenPath()
+        defer { GhosttyFFI.freeString(ghosttyPath) }
+
+        guard let ptr = ghosttyPath.ptr else { return }
+        let pathData = Data(bytes: ptr, count: Int(ghosttyPath.len))
+        guard let effectiveConfigPath = String(data: pathData, encoding: .utf8), !effectiveConfigPath.isEmpty else { return }
+
+        let effectiveConfigURL = URL(fileURLWithPath: effectiveConfigPath)
+        guard let bundleID = Bundle.main.bundleIdentifier else { return }
+        let fm = FileManager.default
+        guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+
+        let appConfigDir = appSupport.appendingPathComponent(bundleID, isDirectory: true)
+        let presetConfigURL = appConfigDir.appendingPathComponent("calyx-glass.conf", isDirectory: false)
+
+        let presetStart = "# --- Calyx Glass Preset (managed) ---"
+        let presetEnd = "# --- End Calyx Glass Preset ---"
+        let presetBlock = """
+        \(presetStart)
+        background-opacity = 0.82
+        \(presetEnd)
+        """
+
+        let includeStart = "# --- Calyx Include (managed) ---"
+        let includeEnd = "# --- End Calyx Include ---"
+        let includeBlock = """
+        \(includeStart)
+        config-file = \(presetConfigURL.path)
+        \(includeEnd)
+        """
+
+        do {
+            try fm.createDirectory(at: appConfigDir, withIntermediateDirectories: true)
+            try fm.createDirectory(at: effectiveConfigURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+            if !fm.fileExists(atPath: presetConfigURL.path) {
+                try (presetBlock + "\n").write(to: presetConfigURL, atomically: true, encoding: .utf8)
+            }
+
+            let existingMain = (try? String(contentsOf: effectiveConfigURL, encoding: .utf8)) ?? ""
+            var normalizedMain = existingMain
+
+            // Remove legacy managed blocks that directly overrode shared Ghostty config.
+            normalizedMain = removeManagedBlock(
+                from: normalizedMain,
+                startMarker: "# --- Calyx Visual Defaults (managed) ---",
+                endMarker: "# --- End Calyx Visual Defaults ---"
+            )
+            normalizedMain = removeManagedBlock(
+                from: normalizedMain,
+                startMarker: presetStart,
+                endMarker: presetEnd
+            )
+
+            if let startRange = normalizedMain.range(of: includeStart),
+               let endRange = normalizedMain.range(of: includeEnd, range: startRange.lowerBound..<normalizedMain.endIndex) {
+                let replacementRange = startRange.lowerBound..<endRange.upperBound
+                normalizedMain = normalizedMain.replacingCharacters(in: replacementRange, with: includeBlock)
+            } else if !normalizedMain.contains("config-file = \(presetConfigURL.path)") {
+                let separator = normalizedMain.isEmpty || normalizedMain.hasSuffix("\n") ? "" : "\n"
+                normalizedMain += separator + "\n" + includeBlock + "\n"
+            }
+
+            if normalizedMain != existingMain {
+                try normalizedMain.write(to: effectiveConfigURL, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            logger.warning("Failed to apply Calyx glass preset: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private static func removeManagedBlock(from text: String, startMarker: String, endMarker: String) -> String {
+        guard let startRange = text.range(of: startMarker),
+              let endRange = text.range(of: endMarker, range: startRange.lowerBound..<text.endIndex) else {
+            return text
+        }
+        var mutable = text
+        let removeRange = startRange.lowerBound..<endRange.upperBound
+        mutable.removeSubrange(removeRange)
+        return mutable.replacingOccurrences(of: "\n\n\n", with: "\n\n")
     }
 
     /// Reload the configuration from disk.

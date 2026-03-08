@@ -758,6 +758,16 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    func applyCurrentGhosttyConfig() {
+        guard let config = GhosttyAppController.shared.configManager.config else { return }
+
+        for group in windowSession.groups {
+            for tab in group.tabs {
+                tab.registry.applyConfig(config)
+            }
+        }
+    }
+
     // MARK: - Menu Actions
 
     @objc func newTab(_ sender: Any?) {

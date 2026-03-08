@@ -132,4 +132,13 @@ final class SurfaceRegistry {
     func contains(_ id: UUID) -> Bool {
         entries[id] != nil
     }
+
+    func applyConfig(_ config: ghostty_config_t) {
+        for id in allIDs {
+            guard let entry = entries[id] else { continue }
+            entry.controller.updateConfig(config)
+            entry.controller.refresh()
+            entry.view.needsDisplay = true
+        }
+    }
 }
