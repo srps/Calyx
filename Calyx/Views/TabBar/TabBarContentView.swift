@@ -39,6 +39,7 @@ struct TabBarContentView: View {
                 .onChange(of: tabs.map(\.id)) { _, _ in
                     scrollToActiveTab(proxy: proxy, animated: false)
                 }
+                .background(TabBarWheelBridge())
             }
 
             Color.clear
@@ -70,6 +71,63 @@ struct TabBarContentView: View {
                 proxy.scrollTo(activeTabID, anchor: .center)
             }
         }
+    }
+}
+
+private struct TabBarWheelBridge: NSViewRepresentable {
+    func makeNSView(context: Context) -> WheelBridgeView {
+        WheelBridgeView()
+    }
+
+    func updateNSView(_ nsView: WheelBridgeView, context: Context) {}
+}
+
+@MainActor
+private final class WheelBridgeView: NSView {
+    private var eventMonitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        installMonitorIfNeeded()
+    }
+
+    private func installMonitorIfNeeded() {
+        guard eventMonitor == nil else { return }
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self else { return event }
+            return self.handle(event: event)
+        }
+    }
+
+    private func handle(event: NSEvent) -> NSEvent? {
+        guard abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) else { return event }
+        guard let scrollView = targetScrollView(for: event) else { return event }
+        guard let documentView = scrollView.documentView else { return event }
+
+        let viewportWidth = scrollView.contentView.bounds.width
+        let maxX = max(0, documentView.bounds.width - viewportWidth)
+        guard maxX > 0 else { return event }
+
+        let delta = event.scrollingDeltaY
+        var newX = scrollView.contentView.bounds.origin.x - delta
+        newX = min(max(0, newX), maxX)
+
+        var origin = scrollView.contentView.bounds.origin
+        origin.x = newX
+        scrollView.contentView.setBoundsOrigin(origin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+
+        return nil
+    }
+
+    private func targetScrollView(for event: NSEvent) -> NSScrollView? {
+        guard let window, let contentView = window.contentView else { return nil }
+        let locationInContent = contentView.convert(event.locationInWindow, from: nil)
+        guard let hitView = contentView.hitTest(locationInContent) else { return nil }
+        guard let scrollView = hitView.enclosingScrollView else { return nil }
+        // Only intercept the compact horizontal tab strip scroller (not sidebar/main content).
+        guard scrollView.contentView.bounds.height <= 48 else { return nil }
+        return scrollView
     }
 }
 
