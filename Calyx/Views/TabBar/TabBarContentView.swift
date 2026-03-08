@@ -41,9 +41,11 @@ struct TabBarContentView: View {
                 }
                 .background(TabBarWheelBridge())
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
 
             Color.clear
-                .frame(maxWidth: .infinity, minHeight: 32)
+                .frame(width: 40, height: 32)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { onNewTab?() }
 
