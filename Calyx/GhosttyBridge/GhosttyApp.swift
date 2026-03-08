@@ -60,7 +60,7 @@ final class GhosttyAppController {
 
         // Create the runtime config with our callbacks.
         // We pass `self` as userdata via Unmanaged so C callbacks can recover it.
-        var runtimeConfig = ghostty_runtime_config_s(
+        var runtimeConfig: ghostty_runtime_config_s = ghostty_runtime_config_s(
             userdata: Unmanaged.passUnretained(self).toOpaque(),
             supports_selection_clipboard: false,
             wakeup_cb: ghosttyWakeupCallback,
@@ -169,7 +169,7 @@ final class GhosttyAppController {
                 return
             }
 
-            var runtimeConfig = ghostty_runtime_config_s(
+            var runtimeConfig: ghostty_runtime_config_s = ghostty_runtime_config_s(
                 userdata: Unmanaged.passUnretained(self).toOpaque(),
                 supports_selection_clipboard: false,
                 wakeup_cb: ghosttyWakeupCallback,

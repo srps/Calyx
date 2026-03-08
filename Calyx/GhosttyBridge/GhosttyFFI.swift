@@ -203,8 +203,8 @@ enum GhosttyFFI {
     }
 
     /// Get the inherited configuration for a surface (used when creating splits/tabs).
-    static func surfaceInheritedConfig(_ surface: ghostty_surface_t) -> ghostty_surface_config_s {
-        ghostty_surface_inherited_config(surface)
+    static func surfaceInheritedConfig(_ surface: ghostty_surface_t, context: ghostty_surface_context_e = GHOSTTY_SURFACE_CONTEXT_SPLIT) -> ghostty_surface_config_s {
+        ghostty_surface_inherited_config(surface, context)
     }
 
     /// Update a surface's configuration.
@@ -272,7 +272,8 @@ enum GhosttyFFI {
 
     /// Check if a key event matches a surface-level binding.
     static func surfaceKeyIsBinding(_ surface: ghostty_surface_t, event: ghostty_input_key_s) -> Bool {
-        ghostty_surface_key_is_binding(surface, event)
+        var flags = ghostty_binding_flags_e(rawValue: 0)
+        return ghostty_surface_key_is_binding(surface, event, &flags)
     }
 
     /// Send composed text to the surface.
@@ -386,11 +387,6 @@ enum GhosttyFFI {
     @discardableResult
     static func surfaceBindingAction(_ surface: ghostty_surface_t, action: UnsafePointer<CChar>, len: UInt) -> Bool {
         ghostty_surface_binding_action(surface, action, len)
-    }
-
-    /// Get the command options for a surface.
-    static func surfaceCommands(_ surface: ghostty_surface_t, commands: inout UnsafeMutablePointer<ghostty_command_s>?, count: inout Int) {
-        ghostty_surface_commands(surface, &commands, &count)
     }
 
     // MARK: - Surface QuickLook (macOS)
