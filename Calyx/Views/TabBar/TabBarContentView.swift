@@ -39,13 +39,13 @@ struct TabBarContentView: View {
                 .onChange(of: tabs.map(\.id)) { _, _ in
                     scrollToActiveTab(proxy: proxy, animated: false)
                 }
-                .background(TabBarWheelBridge())
+                .background(TabBarWheelBridge(onDoubleClickEmptyArea: onNewTab))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
 
-            Color.clear
-                .frame(width: 40, height: 32)
+            Spacer(minLength: 40)
+                .frame(height: 32)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { onNewTab?() }
 
@@ -77,16 +77,36 @@ struct TabBarContentView: View {
 }
 
 private struct TabBarWheelBridge: NSViewRepresentable {
-    func makeNSView(context: Context) -> WheelBridgeView {
-        WheelBridgeView()
+    var onDoubleClickEmptyArea: (() -> Void)?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onDoubleClickEmptyArea: onDoubleClickEmptyArea)
     }
 
-    func updateNSView(_ nsView: WheelBridgeView, context: Context) {}
+    func makeNSView(context: Context) -> WheelBridgeView {
+        let view = WheelBridgeView()
+        view.onDoubleClickEmptyArea = { context.coordinator.onDoubleClickEmptyArea?() }
+        return view
+    }
+
+    func updateNSView(_ nsView: WheelBridgeView, context: Context) {
+        context.coordinator.onDoubleClickEmptyArea = onDoubleClickEmptyArea
+        nsView.onDoubleClickEmptyArea = { context.coordinator.onDoubleClickEmptyArea?() }
+    }
+
+    final class Coordinator {
+        var onDoubleClickEmptyArea: (() -> Void)?
+
+        init(onDoubleClickEmptyArea: (() -> Void)?) {
+            self.onDoubleClickEmptyArea = onDoubleClickEmptyArea
+        }
+    }
 }
 
 @MainActor
 private final class WheelBridgeView: NSView {
     private var eventMonitor: Any?
+    var onDoubleClickEmptyArea: (() -> Void)?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -95,13 +115,24 @@ private final class WheelBridgeView: NSView {
 
     private func installMonitorIfNeeded() {
         guard eventMonitor == nil else { return }
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown]) { [weak self] event in
             guard let self else { return event }
             return self.handle(event: event)
         }
     }
 
     private func handle(event: NSEvent) -> NSEvent? {
+        switch event.type {
+        case .scrollWheel:
+            return handleScrollWheel(event)
+        case .leftMouseDown:
+            return handleDoubleClick(event)
+        default:
+            return event
+        }
+    }
+
+    private func handleScrollWheel(_ event: NSEvent) -> NSEvent? {
         guard abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) else { return event }
         guard let scrollView = targetScrollView(for: event) else { return event }
         guard let documentView = scrollView.documentView else { return event }
@@ -119,6 +150,24 @@ private final class WheelBridgeView: NSView {
         scrollView.contentView.setBoundsOrigin(origin)
         scrollView.reflectScrolledClipView(scrollView.contentView)
 
+        return nil
+    }
+
+    private func handleDoubleClick(_ event: NSEvent) -> NSEvent? {
+        guard event.clickCount == 2 else { return event }
+        guard let window, let contentView = window.contentView else { return event }
+        let locationInContent = contentView.convert(event.locationInWindow, from: nil)
+        guard let hitView = contentView.hitTest(locationInContent) else { return event }
+        guard let scrollView = hitView.enclosingScrollView else { return event }
+        guard scrollView.contentView.bounds.height <= 48 else { return event }
+
+        let isEmptyStripArea =
+            hitView is NSClipView ||
+            hitView is NSScroller ||
+            hitView == scrollView
+        guard isEmptyStripArea else { return event }
+
+        onDoubleClickEmptyArea?()
         return nil
     }
 
