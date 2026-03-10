@@ -8,6 +8,25 @@
 
 @preconcurrency import AppKit
 
+/// Flipped document view so scroll coordinates match top-to-bottom orientation.
+private class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+/// NSScrollView subclass that only intercepts hits on its scroller.
+/// All other hits pass through to the surfaceView underneath.
+private class OverlayScrollView: NSScrollView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if let scroller = verticalScroller, !scroller.isHidden {
+            let scrollerPoint = scroller.convert(point, from: superview)
+            if scroller.bounds.contains(scrollerPoint) {
+                return super.hitTest(point)
+            }
+        }
+        return nil
+    }
+}
+
 @MainActor
 class SurfaceScrollView: NSView {
 
@@ -53,8 +72,8 @@ class SurfaceScrollView: NSView {
 
     // MARK: - Instance Properties
 
-    private let scrollView = NSScrollView()
-    private let documentContentView = NSView() // documentView
+    private let scrollView = OverlayScrollView()
+    private let documentContentView = FlippedView() // documentView
     private(set) var surfaceView: SurfaceView
 
     private var cellHeight: CGFloat = 0
@@ -141,8 +160,8 @@ class SurfaceScrollView: NSView {
         scrollView.verticalScrollElasticity = .none
         scrollView.horizontalScrollElasticity = .none
 
-        addSubview(scrollView)
         addSubview(surfaceView)
+        addSubview(scrollView)
 
         // Register for live scroll notifications
         NotificationCenter.default.addObserver(
@@ -211,11 +230,11 @@ class SurfaceScrollView: NSView {
         guard contentSize.width > 0, contentSize.height > 0 else { return }
 
         // Apply initial cell size if missed during surface init.
-        if cellHeight <= 0,
-           let controller = surfaceView.surfaceController,
-           controller.cellSize.height > 0 {
-            applyCellHeight(pixelHeight: controller.cellSize.height)
-            return  // applyCellHeight calls synchronizeLayout again with cellHeight set.
+        if cellHeight <= 0 {
+            if surfaceView.cachedCellSize.height > 0 {
+                applyCellHeight(pixelHeight: surfaceView.cachedCellSize.height)
+                return  // applyCellHeight calls synchronizeLayout again with cellHeight set.
+            }
         }
 
         // ScrollView fills our entire bounds
@@ -246,9 +265,8 @@ class SurfaceScrollView: NSView {
             )
         }
 
-        // Position surface to track visible rect
-        let visibleOrigin = scrollView.contentView.documentVisibleRect.origin
-        surfaceView.frame.origin = visibleOrigin
+        // Surface is a sibling of scrollView (not inside it), so it stays at origin.
+        surfaceView.frame.origin = .zero
 
         layoutSearchBar()
     }
@@ -290,9 +308,10 @@ class SurfaceScrollView: NSView {
         let scrollY = Self.offsetToScrollY(offset: validated.offset, cellHeight: cellHeight)
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: scrollY))
         scrollView.reflectScrolledClipView(scrollView.contentView)
+        scrollView.flashScrollers()
 
-        // Update surface position
-        surfaceView.frame.origin = scrollView.contentView.documentVisibleRect.origin
+        // Surface stays at origin; ghostty re-renders the visible content.
+        surfaceView.frame.origin = .zero
     }
 
     // MARK: - Live Scroll (UI → Core)
@@ -300,8 +319,8 @@ class SurfaceScrollView: NSView {
     @objc private func scrollViewDidLiveScroll(_ notification: Notification) {
         isLiveScrolling = true
 
-        // Update surface position to track visible rect
-        surfaceView.frame.origin = scrollView.contentView.documentVisibleRect.origin
+        // Surface stays at origin; ghostty re-renders the visible content.
+        surfaceView.frame.origin = .zero
 
         guard cellHeight > 0 else { return }
 

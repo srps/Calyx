@@ -38,6 +38,11 @@ class SurfaceView: NSView {
     /// Called when ghostty sends a scrollbar update for this surface.
     var scrollbarUpdateHandler: ((GhosttySurfaceController.ScrollbarState) -> Void)?
 
+    /// Cached cell size from the last CELL_SIZE action.
+    /// Stored directly on the view so it survives the timing gap where
+    /// surfaceController is nil during ghostty_surface_new.
+    var cachedCellSize: NSSize = .zero
+
     /// Accumulator for text generated during a keyDown event.
     /// Non-nil when we are inside a keyDown handler.
     private var keyTextAccumulator: [String]? = nil

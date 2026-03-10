@@ -331,11 +331,11 @@ enum GhosttyActionRouter {
     ) -> Bool {
         guard let surfaceView = surfaceView(from: target) else { return false }
 
-        // Update the surface controller's cell size.
-        surfaceView.surfaceController?.cellSize = NSSize(
-            width: CGFloat(value.width),
-            height: CGFloat(value.height)
-        )
+        // Update both the cached cell size on the view (always succeeds) and
+        // the surface controller (may be nil during ghostty_surface_new).
+        let size = NSSize(width: CGFloat(value.width), height: CGFloat(value.height))
+        surfaceView.cachedCellSize = size
+        surfaceView.surfaceController?.cellSize = size
 
         NotificationCenter.default.post(
             name: .ghosttyCellSizeChange,
