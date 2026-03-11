@@ -86,6 +86,8 @@ struct MainContentView: View {
 
                         if let diffSource = activeDiffSource, let diffState = activeDiffState {
                             DiffContainerView(source: diffSource, loadState: diffState)
+                                .background(VisualEffectBackground(reduceTransparency: reduceTransparency))
+                                .opacity(reduceTransparency ? 1.0 : 0.7)
                         } else if let browserController = activeBrowserController {
                             BrowserContainerView(controller: browserController)
                         } else {
@@ -114,6 +116,35 @@ struct MainContentView: View {
                         .padding(.top, 40)
                     }
                 }
+            }
+        }
+    }
+}
+
+struct VisualEffectBackground: NSViewRepresentable {
+    let reduceTransparency: Bool
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.blendingMode = .withinWindow
+        view.state = .followsWindowActiveState
+        if #available(macOS 26.0, *) {
+            view.material = .menu
+        } else {
+            view.material = .hudWindow
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        if reduceTransparency {
+            nsView.isHidden = true
+        } else {
+            nsView.isHidden = false
+            if #available(macOS 26.0, *) {
+                nsView.material = .menu
+            } else {
+                nsView.material = .hudWindow
             }
         }
     }

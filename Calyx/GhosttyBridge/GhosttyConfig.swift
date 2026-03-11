@@ -22,6 +22,15 @@ final class GhosttyConfigManager {
     # --- End Calyx Glass Preset ---
     """
 
+    private static var calyxConfigDir: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/calyx", isDirectory: true)
+    }
+
+    private static var calyxGlassPresetURL: URL {
+        calyxConfigDir.appendingPathComponent("calyx-glass.conf", isDirectory: false)
+    }
+
     static func removeCursorClickToMoveLine(from text: String) -> String {
         text.split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("cursor-click-to-move") }
@@ -67,6 +76,10 @@ final class GhosttyConfigManager {
         config = nil
     }
 
+    /// Guards one-time setup (file creation, migration, stale block cleanup).
+    /// Note: configLoadFile for calyx-glass.conf runs on EVERY loadDefaultConfig call regardless of this flag.
+    private static var hasAppliedPreset = false
+
     // MARK: - Loading
 
     /// Creates a new configuration, loads default files, finalizes, and checks diagnostics.
@@ -77,13 +90,22 @@ final class GhosttyConfigManager {
             return nil
         }
 
-        applyCalyxGlassPresetIfPossible()
+        if !hasAppliedPreset {
+            applyCalyxGlassPresetIfPossible()
+            hasAppliedPreset = true
+        }
 
         // Load configuration from default file locations.
         GhosttyFFI.configLoadDefaultFiles(cfg)
 
         // Load recursively referenced configuration files.
         GhosttyFFI.configLoadRecursiveFiles(cfg)
+
+        // Load Calyx glass preset after default files so its values take precedence.
+        let presetPath = calyxGlassPresetURL.path
+        if FileManager.default.fileExists(atPath: presetPath) {
+            GhosttyFFI.configLoadFile(cfg, path: presetPath)
+        }
 
         // Finalize makes defaults available.
         GhosttyFFI.configFinalize(cfg)
@@ -103,39 +125,30 @@ final class GhosttyConfigManager {
     }
 
     private static func applyCalyxGlassPresetIfPossible() {
-        let ghosttyPath = GhosttyFFI.configOpenPath()
-        defer { GhosttyFFI.freeString(ghosttyPath) }
-
-        guard let ptr = ghosttyPath.ptr else { return }
-        let pathData = Data(bytes: ptr, count: Int(ghosttyPath.len))
-        guard let effectiveConfigPath = String(data: pathData, encoding: .utf8), !effectiveConfigPath.isEmpty else { return }
-
-        let effectiveConfigURL = URL(fileURLWithPath: effectiveConfigPath)
-        guard let bundleID = Bundle.main.bundleIdentifier else { return }
         let fm = FileManager.default
-        guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-
-        let appConfigDir = appSupport.appendingPathComponent(bundleID, isDirectory: true)
-        let presetConfigURL = appConfigDir.appendingPathComponent("calyx-glass.conf", isDirectory: false)
-
-        let presetStart = "# --- Calyx Glass Preset (managed) ---"
-        let presetEnd = "# --- End Calyx Glass Preset ---"
-
-        let includeStart = "# --- Calyx Include (managed) ---"
-        let includeEnd = "# --- End Calyx Include ---"
-        let includeBlock = """
-        \(includeStart)
-        config-file = \(presetConfigURL.path)
-        \(includeEnd)
-        """
+        let presetConfigURL = calyxGlassPresetURL
 
         do {
-            try fm.createDirectory(at: appConfigDir, withIntermediateDirectories: true)
-            try fm.createDirectory(at: effectiveConfigURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // 1. Create ~/.config/calyx/ directory if needed.
+            try fm.createDirectory(at: calyxConfigDir, withIntermediateDirectories: true)
 
+            // 2. Migrate from old Application Support path if needed.
+            if let oldBundleID = Bundle.main.bundleIdentifier,
+               let oldAppSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+                let oldPath = oldAppSupport
+                    .appendingPathComponent(oldBundleID, isDirectory: true)
+                    .appendingPathComponent("calyx-glass.conf", isDirectory: false)
+                if fm.fileExists(atPath: oldPath.path) && !fm.fileExists(atPath: presetConfigURL.path) {
+                    try? fm.copyItem(at: oldPath, to: presetConfigURL)
+                    try? fm.removeItem(at: oldPath)
+                }
+            }
+
+            // 3. Create calyx-glass.conf with defaults if it doesn't exist.
             if !fm.fileExists(atPath: presetConfigURL.path) {
                 try (glassPresetTemplate + "\n").write(to: presetConfigURL, atomically: true, encoding: .utf8)
             } else {
+                // 4. Remove cursor-click-to-move lines from existing calyx-glass.conf (migration).
                 let existing = try String(contentsOf: presetConfigURL, encoding: .utf8)
                 let migrated = removeCursorClickToMoveLine(from: existing)
                 if migrated != existing {
@@ -143,47 +156,79 @@ final class GhosttyConfigManager {
                 }
             }
 
-            let existingMain = (try? String(contentsOf: effectiveConfigURL, encoding: .utf8)) ?? ""
-            var normalizedMain = existingMain
-
-            // Remove legacy managed blocks that directly overrode shared Ghostty config.
-            normalizedMain = removeManagedBlock(
-                from: normalizedMain,
-                startMarker: "# --- Calyx Visual Defaults (managed) ---",
-                endMarker: "# --- End Calyx Visual Defaults ---"
-            )
-            normalizedMain = removeManagedBlock(
-                from: normalizedMain,
-                startMarker: presetStart,
-                endMarker: presetEnd
-            )
-
-            if let startRange = normalizedMain.range(of: includeStart),
-               let endRange = normalizedMain.range(of: includeEnd, range: startRange.lowerBound..<normalizedMain.endIndex) {
-                let replacementRange = startRange.lowerBound..<endRange.upperBound
-                normalizedMain = normalizedMain.replacingCharacters(in: replacementRange, with: includeBlock)
-            } else if !normalizedMain.contains("config-file = \(presetConfigURL.path)") {
-                let separator = normalizedMain.isEmpty || normalizedMain.hasSuffix("\n") ? "" : "\n"
-                normalizedMain += separator + "\n" + includeBlock + "\n"
-            }
-
-            if normalizedMain != existingMain {
-                try normalizedMain.write(to: effectiveConfigURL, atomically: true, encoding: .utf8)
-            }
+            // 5. One-time cleanup: remove stale managed blocks from the main ghostty config.
+            cleanupMainGhosttyConfig(fileManager: fm)
         } catch {
             logger.warning("Failed to apply Calyx glass preset: \(error.localizedDescription, privacy: .public)")
         }
     }
 
-    private static func removeManagedBlock(from text: String, startMarker: String, endMarker: String) -> String {
-        guard let startRange = text.range(of: startMarker),
-              let endRange = text.range(of: endMarker, range: startRange.lowerBound..<text.endIndex) else {
-            return text
+    /// Removes any stale Calyx-managed blocks from the main ghostty config file.
+    /// Resolves symlinks and verifies the path is safe before writing.
+    private static func cleanupMainGhosttyConfig(fileManager fm: FileManager) {
+        let ghosttyPath = GhosttyFFI.configOpenPath()
+        defer { GhosttyFFI.freeString(ghosttyPath) }
+
+        guard let ptr = ghosttyPath.ptr else { return }
+        let pathData = Data(bytes: ptr, count: Int(ghosttyPath.len))
+        guard let effectiveConfigPath = String(data: pathData, encoding: .utf8),
+              !effectiveConfigPath.isEmpty else { return }
+
+        let effectiveConfigURL = URL(fileURLWithPath: effectiveConfigPath)
+
+        // Resolve symlinks to get the real path.
+        let resolvedPath = effectiveConfigURL.resolvingSymlinksInPath().path
+        let homeDir = fm.homeDirectoryForCurrentUser.path
+
+        // Safety: only write if resolved path is under ~/.config/ or ~/Library/Application Support/.
+        let allowedPrefixes = [
+            homeDir + "/.config/",
+            homeDir + "/Library/Application Support/",
+        ]
+        guard allowedPrefixes.contains(where: { resolvedPath.hasPrefix($0) }) else {
+            logger.warning("Skipping main config cleanup: resolved path '\(resolvedPath, privacy: .public)' is outside allowed directories")
+            return
         }
+
+        guard let existingMain = try? String(contentsOf: effectiveConfigURL, encoding: .utf8) else { return }
+        var cleaned = existingMain
+
+        // Remove all known Calyx-managed block types.
+        cleaned = removeManagedBlock(
+            from: cleaned,
+            startMarker: "# --- Calyx Visual Defaults (managed) ---",
+            endMarker: "# --- End Calyx Visual Defaults ---"
+        )
+        cleaned = removeManagedBlock(
+            from: cleaned,
+            startMarker: "# --- Calyx Glass Preset (managed) ---",
+            endMarker: "# --- End Calyx Glass Preset ---"
+        )
+        cleaned = removeManagedBlock(
+            from: cleaned,
+            startMarker: "# --- Calyx Include (managed) ---",
+            endMarker: "# --- End Calyx Include ---"
+        )
+
+        // Write back only if changes were made.
+        if cleaned != existingMain {
+            do {
+                try cleaned.write(to: effectiveConfigURL, atomically: true, encoding: .utf8)
+                logger.info("Cleaned stale Calyx managed blocks from ghostty config")
+            } catch {
+                logger.warning("Failed to clean main ghostty config: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    private static func removeManagedBlock(from text: String, startMarker: String, endMarker: String) -> String {
         var mutable = text
-        let removeRange = startRange.lowerBound..<endRange.upperBound
-        mutable.removeSubrange(removeRange)
-        return mutable.replacingOccurrences(of: "\n\n\n", with: "\n\n")
+        while let startRange = mutable.range(of: startMarker),
+              let endRange = mutable.range(of: endMarker, range: startRange.lowerBound..<mutable.endIndex) {
+            mutable.removeSubrange(startRange.lowerBound..<endRange.upperBound)
+            mutable = mutable.replacingOccurrences(of: "\n\n\n", with: "\n\n")
+        }
+        return mutable
     }
 
     /// Reload the configuration from disk.
