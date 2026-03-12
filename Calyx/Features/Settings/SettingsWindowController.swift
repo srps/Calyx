@@ -251,10 +251,9 @@ class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func applyOpacityToRunningSurfaces() {
+        // reloadConfig(soft: false) handles both disk reload and window propagation
+        // via ConfigReloadCoordinator with 200ms debounce.
         GhosttyAppController.shared.reloadConfig()
-        if let appDelegate = NSApp.delegate as? AppDelegate {
-            appDelegate.applyCurrentGhosttyConfigToAllWindows()
-        }
     }
 
     private func snapshotCurrentAsLoaded() {

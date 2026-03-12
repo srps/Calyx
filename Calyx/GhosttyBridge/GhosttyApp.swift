@@ -33,6 +33,12 @@ final class GhosttyAppController {
     /// The global configuration manager.
     private(set) var configManager: GhosttyConfigManager
 
+    /// Monotonic reload generation counter for config reload tracking.
+    private var reloadGeneration: Int = 0
+
+    /// Coordinator for debounced config reload.
+    private var reloadCoordinator: ConfigReloadCoordinator?
+
     /// True if the app needs confirmation before quitting.
     var needsConfirmQuit: Bool {
         guard let app else { return false }
@@ -87,6 +93,10 @@ final class GhosttyAppController {
         // Register for system notifications.
         registerNotifications()
 
+        // Initialize the config reload coordinator.
+        let adapter = ReloadDepsAdapter(controller: self)
+        self.reloadCoordinator = ConfigReloadCoordinator(deps: adapter)
+
         logger.info("GhosttyAppController initialized successfully")
     }
 
@@ -125,28 +135,50 @@ final class GhosttyAppController {
 
     /// Reload configuration from disk.
     func reloadConfig(soft: Bool = false) {
-        guard let app else { return }
-
-        if soft {
-            guard let config = configManager.config else { return }
-            GhosttyFFI.appUpdateConfig(app, config: config)
-            return
-        }
-
-        let newConfigManager = GhosttyConfigManager()
-        guard newConfigManager.isLoaded, let newConfig = newConfigManager.config else {
-            logger.warning("Failed to reload configuration")
-            return
-        }
-
-        GhosttyFFI.appUpdateConfig(app, config: newConfig)
-        // Set config manager after updating so old config memory stays valid during update.
-        self.configManager = newConfigManager
+        guard app != nil else { return }
+        reloadCoordinator?.reloadConfig(soft: soft)
     }
 
     /// Request the surface to close.
     func requestClose(surface: ghostty_surface_t) {
         GhosttyFFI.surfaceRequestClose(surface)
+    }
+
+    // MARK: - Config Reload Adapter
+
+    /// Adapter bridging ConfigReloadDeps to GhosttyAppController internals.
+    private final class ReloadDepsAdapter: ConfigReloadDeps {
+        private weak var controller: GhosttyAppController?
+
+        init(controller: GhosttyAppController) {
+            self.controller = controller
+        }
+
+        func loadConfigFromDisk() -> Int? {
+            guard let controller, let app = controller.app else { return nil }
+
+            let newConfigManager = GhosttyConfigManager()
+            guard newConfigManager.isLoaded, let newConfig = newConfigManager.config else {
+                logger.warning("Config reload failed — keeping previous config")
+                for diag in newConfigManager.diagnostics {
+                    logger.warning("Config diagnostic: \(diag)")
+                }
+                return nil
+            }
+
+            GhosttyFFI.appUpdateConfig(app, config: newConfig)
+            // Set config manager after updating so old config memory stays valid during update.
+            controller.configManager = newConfigManager
+            controller.reloadGeneration += 1
+            logger.info("Config reloaded from disk (generation \(controller.reloadGeneration))")
+            return controller.reloadGeneration
+        }
+
+        func propagateConfigToAllWindows() {
+            if let appDelegate = NSApp.delegate as? AppDelegate {
+                appDelegate.applyCurrentGhosttyConfigToAllWindows()
+            }
+        }
     }
 
     // MARK: - Private
@@ -186,6 +218,9 @@ final class GhosttyAppController {
                 self.readiness = .ready
                 GhosttyFFI.appSetFocus(retryApp, focused: NSApp.isActive)
                 registerNotifications()
+
+                let adapter = ReloadDepsAdapter(controller: self)
+                self.reloadCoordinator = ConfigReloadCoordinator(deps: adapter)
             } else {
                 self.readiness = .error
             }
