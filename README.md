@@ -18,9 +18,7 @@ A macOS 26+ native terminal application built on [libghostty](https://github.com
 - **Native Scrollbar** -- system overlay scrollbar for terminal scrollback
 - **Cursor Click-to-Move** -- click on a prompt line to reposition cursor (requires shell integration)
 - **Git Source Control** -- sidebar Changes view with working changes (staged/unstaged/untracked), commit graph with branch visualization, and inline diff viewer
-- **Claude Code IPC** -- MCP server for communication between Claude Code instances across tabs and panes
-
-  [![IPC Demo](https://img.youtube.com/vi/3i3Enat9jPA/0.jpg)](https://www.youtube.com/watch?v=3i3Enat9jPA)
+- **Claude Code IPC** -- MCP server for communication between Claude Code instances across tabs and panes ([demo video](https://www.youtube.com/watch?v=3i3Enat9jPA))
 - **Ghostty config compatibility** -- reads `~/.config/ghostty/config`
 
 ## Keyboard Shortcuts
