@@ -498,25 +498,7 @@ enum GhosttyActionRouter {
     }
 
     private static func handleOpenConfig(_ app: ghostty_app_t) -> Bool {
-        let ghosttyStr = GhosttyFFI.configOpenPath()
-        defer { GhosttyFFI.freeString(ghosttyStr) }
-
-        guard let ptr = ghosttyStr.ptr else { return false }
-        let data = Data(bytes: ptr, count: Int(ghosttyStr.len))
-        guard let path = String(data: data, encoding: .utf8), !path.isEmpty else { return false }
-
-        let fileURL = URL(fileURLWithPath: path)
-
-        // Open with the default text editor.
-        if let textEditor = NSWorkspace.shared.defaultTextEditor {
-            NSWorkspace.shared.open(
-                [fileURL],
-                withApplicationAt: textEditor,
-                configuration: NSWorkspace.OpenConfiguration()
-            )
-        } else {
-            NSWorkspace.shared.open(fileURL)
-        }
+        SettingsWindowController.shared.showSettings()
         return true
     }
 
