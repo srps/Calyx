@@ -2,7 +2,7 @@ import XCTest
 
 final class BrowserScriptingUITests: CalyxUITestCase {
 
-    private let outputFile = "/tmp/calyx-e2e-output.txt"
+    private var cmdCounter = 0
 
     private func paletteRun(_ query: String, buttonTitle: String = "OK") {
         openCommandPaletteViaMenu()
@@ -21,25 +21,27 @@ final class BrowserScriptingUITests: CalyxUITestCase {
 
     /// Paste a command into the terminal via Cmd+V (bypasses IME), run it, read output from file.
     private func terminalExec(_ command: String) -> String {
-        try? FileManager.default.removeItem(atPath: outputFile)
+        cmdCounter += 1
+        let outFile = "/tmp/calyx-e2e-\(cmdCounter).txt"
+        try? FileManager.default.removeItem(atPath: outFile)
 
-        Thread.sleep(forTimeInterval: 1) // wait for shell prompt
+        Thread.sleep(forTimeInterval: 1)
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString("\(command) > \(outputFile) 2>&1", forType: .string)
+        pb.setString("\(command) > \(outFile) 2>&1", forType: .string)
         app.typeKey("v", modifierFlags: .command)
         Thread.sleep(forTimeInterval: 0.5)
         app.typeKey(.return, modifierFlags: [])
 
         for _ in 0..<20 {
             Thread.sleep(forTimeInterval: 0.5)
-            if FileManager.default.fileExists(atPath: outputFile),
-               let content = try? String(contentsOfFile: outputFile, encoding: .utf8),
+            if FileManager.default.fileExists(atPath: outFile),
+               let content = try? String(contentsOfFile: outFile, encoding: .utf8),
                !content.isEmpty {
-                return content
+                return content.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        return (try? String(contentsOfFile: outputFile, encoding: .utf8)) ?? "(no output)"
+        return (try? String(contentsOfFile: outFile, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "(no output)"
     }
 
     func test_mcpToolsWorkEndToEnd() {
@@ -90,13 +92,71 @@ final class BrowserScriptingUITests: CalyxUITestCase {
         let snap = terminalExec("calyx browser snapshot --tab-id \(tabId)")
         XCTAssertFalse(snap.isEmpty, "snapshot should not be empty")
 
-        // 8. calyx browser click a --tab-id <id>
-        let click = terminalExec("calyx browser click a --tab-id \(tabId)")
-        XCTAssertFalse(click.contains("Error"), "click should not error, got: \(click)")
+        // 8. calyx browser get-html h1 --tab-id <id>
+        let getHTML = terminalExec("calyx browser get-html h1 --tab-id \(tabId)")
+        XCTAssertTrue(getHTML.contains("<h1"), "get-html should contain h1 tag, got: \(getHTML.prefix(200))")
 
-        // 9. calyx browser eval --tab-id <id>
-        let eval = terminalExec("calyx browser eval 'document.title' --tab-id \(tabId)")
-        XCTAssertFalse(eval.isEmpty, "eval should return something, got: \(eval)")
+        // 9. calyx browser eval (before any navigation changes the page)
+        let eval = terminalExec("calyx browser eval \"document.title\" --tab-id \(tabId)")
+        XCTAssertTrue(eval.contains("Example Domain"), "eval should return 'Example Domain', got: [\(eval)]")
+
+        // 10. calyx browser click a --tab-id <id>
+        let click = terminalExec("calyx browser click a --tab-id \(tabId)")
+        XCTAssertTrue(click.contains("clicked"), "click should return 'clicked', got: \(click)")
+
+        // 11. calyx browser navigate --tab-id <id> (go back to example.com after click navigated away)
+        let nav = terminalExec("calyx browser navigate https://example.com --tab-id \(tabId)")
+        XCTAssertTrue(nav.contains("Navigated"), "navigate should return 'Navigated', got: \(nav)")
+        Thread.sleep(forTimeInterval: 3)
+
+        // 12. calyx browser back --tab-id <id>
+        let back = terminalExec("calyx browser back --tab-id \(tabId)")
+        XCTAssertTrue(back.contains("back"), "back should return 'back', got: \(back)")
+
+        // 13. calyx browser forward --tab-id <id>
+        let forward = terminalExec("calyx browser forward --tab-id \(tabId)")
+        XCTAssertTrue(forward.contains("forward"), "forward should return 'forward', got: \(forward)")
+
+        // 14. calyx browser reload --tab-id <id>
+        let reload = terminalExec("calyx browser reload --tab-id \(tabId)")
+        XCTAssertTrue(reload.contains("Reloaded"), "reload should return 'Reloaded', got: \(reload)")
+        Thread.sleep(forTimeInterval: 3)
+
+        // 15. calyx browser screenshot --tab-id <id>
+        let screenshot = terminalExec("calyx browser screenshot --tab-id \(tabId)")
+        XCTAssertTrue(screenshot.contains("/tmp/") || screenshot.contains("path"), "screenshot should return file path, got: \(screenshot)")
+
+        // 16. calyx browser wait --selector h1 --tab-id <id>
+        let wait = terminalExec("calyx browser wait --selector h1 --tab-id \(tabId)")
+        XCTAssertFalse(wait.contains("Error"), "wait should not error, got: \(wait)")
+
+        // 17-22: Form interaction tests — navigate to a page with form elements
+        let _ = terminalExec("calyx browser navigate https://httpbin.org/forms/post --tab-id \(tabId)")
+        Thread.sleep(forTimeInterval: 3)
+
+        // 18. fill (httpbin form has input[name=custname])
+        let fill = terminalExec("calyx browser fill input --value hello --tab-id \(tabId)")
+        XCTAssertTrue(fill.contains("filled"), "fill should return 'filled', got: \(fill)")
+
+        // 19. type
+        let typeCmd = terminalExec("calyx browser type world --tab-id \(tabId)")
+        XCTAssertTrue(typeCmd.contains("typed"), "type should return 'typed', got: \(typeCmd)")
+
+        // 20. press
+        let press = terminalExec("calyx browser press Tab --tab-id \(tabId)")
+        XCTAssertTrue(press.contains("pressed"), "press should return 'pressed', got: \(press)")
+
+        // 21. check (httpbin form has checkboxes)
+        let check = terminalExec("calyx browser check 'input[type=checkbox]' --tab-id \(tabId)")
+        XCTAssertTrue(check.contains("checked"), "check should return 'checked', got: \(check)")
+
+        // 22. uncheck
+        let uncheck = terminalExec("calyx browser uncheck 'input[type=checkbox]' --tab-id \(tabId)")
+        XCTAssertTrue(uncheck.contains("unchecked"), "uncheck should return 'unchecked', got: \(uncheck)")
+
+        // 24. calyx browser open (opens new tab)
+        let open = terminalExec("calyx browser open https://example.com")
+        XCTAssertTrue(open.contains("tab_id"), "open should return tab_id, got: \(open)")
     }
 
     func test_toolsBlockedWithoutScripting() {

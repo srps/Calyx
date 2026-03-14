@@ -191,7 +191,7 @@ enum BrowserAutomation {
 
     static func eval(code: String) -> String {
         wrap("""
-        const result = (() => { \(code) })();
+        const result = (() => { return \(code); })();
         """)
     }
 
@@ -212,38 +212,36 @@ enum BrowserAutomation {
         }
 
         return """
-        (async () => {
-            try {
-                const result = await new Promise((resolve, reject) => {
-                    const timeout = \(timeout);
-                    if (\(condition)) { resolve('found'); return; }
-                    const observer = new MutationObserver(() => {
-                        if (\(condition)) {
-                            observer.disconnect();
-                            resolve('found');
-                        }
-                    });
-                    observer.observe(document.documentElement, {childList: true, subtree: true, characterData: true, attributes: true});
-                    setTimeout(() => {
+        try {
+            const result = await new Promise((resolve, reject) => {
+                const timeout = \(timeout);
+                if (\(condition)) { resolve('found'); return; }
+                const observer = new MutationObserver(() => {
+                    if (\(condition)) {
                         observer.disconnect();
-                        reject(new Error('Timeout after ' + timeout + 'ms'));
-                    }, timeout);
+                        resolve('found');
+                    }
                 });
-                return JSON.stringify({
-                    ok: true,
-                    value: result,
-                    error: null,
-                    pageURL: location.href
-                });
-            } catch (e) {
-                return JSON.stringify({
-                    ok: false,
-                    value: null,
-                    error: e.message || String(e),
-                    pageURL: location.href
-                });
-            }
-        })()
+                observer.observe(document.documentElement, {childList: true, subtree: true, characterData: true, attributes: true});
+                setTimeout(() => {
+                    observer.disconnect();
+                    reject(new Error('Timeout after ' + timeout + 'ms'));
+                }, timeout);
+            });
+            return JSON.stringify({
+                ok: true,
+                value: result,
+                error: null,
+                pageURL: location.href
+            });
+        } catch (e) {
+            return JSON.stringify({
+                ok: false,
+                value: null,
+                error: e.message || String(e),
+                pageURL: location.href
+            });
+        }
         """
     }
 
@@ -270,7 +268,23 @@ enum BrowserAutomation {
             )
         }
 
-        let value = json["value"] as? String
+        let value: String?
+        if let str = json["value"] as? String {
+            value = str
+        } else if let num = json["value"] as? NSNumber {
+            value = num.stringValue
+        } else if json["value"] is NSNull || json["value"] == nil {
+            value = nil
+        } else {
+            // Arrays, dicts, etc — serialize back to JSON
+            if let v = json["value"],
+               let d = try? JSONSerialization.data(withJSONObject: v),
+               let s = String(data: d, encoding: .utf8) {
+                value = s
+            } else {
+                value = String(describing: json["value"]!)
+            }
+        }
         let error = json["error"] as? String
         let pageURL = json["pageURL"] as? String
 

@@ -50,7 +50,14 @@ class BrowserView: NSView {
     func reload() { webView.reload() }
 
     func evaluateJavaScript(_ script: String) async throws -> String {
-        let result = try await webView.evaluateJavaScript(script)
+        let result: Any?
+        if script.contains("await") {
+            result = try await webView.callAsyncJavaScript(
+                script, contentWorld: .page
+            )
+        } else {
+            result = try await webView.evaluateJavaScript(script)
+        }
         if let str = result as? String {
             return str
         }

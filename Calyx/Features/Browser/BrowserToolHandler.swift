@@ -119,6 +119,9 @@ class BrowserToolHandler {
     private func runJS(_ controller: BrowserTabController, _ script: String) async -> BrowserToolResult {
         do {
             let result = try await controller.evaluateJavaScript(script)
+            // Debug: write raw result to file
+            try? "SCRIPT:\n\(script.prefix(200))\n\nRESULT:\n\(result)\n\nPARSED:\n\(BrowserAutomation.parseResponse(result))\n"
+                .write(toFile: "/tmp/calyx-runjs-debug.txt", atomically: true, encoding: .utf8)
             let response = BrowserAutomation.parseResponse(result)
             if response.ok {
                 return BrowserToolResult(text: response.value ?? "", isError: false)
@@ -126,6 +129,7 @@ class BrowserToolHandler {
                 return BrowserToolResult(text: response.error ?? "Unknown error", isError: true)
             }
         } catch {
+            try? "ERROR:\n\(error)\n".write(toFile: "/tmp/calyx-runjs-debug.txt", atomically: true, encoding: .utf8)
             return BrowserToolResult(
                 text: "JavaScript evaluation failed: \(error.localizedDescription)",
                 isError: true

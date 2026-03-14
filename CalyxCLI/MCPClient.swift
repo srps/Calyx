@@ -76,7 +76,8 @@ struct MCPClient {
               let content = result["content"] as? [[String: Any]],
               let first = content.first,
               let text = first["text"] as? String else {
-            throw CLIError.invalidResponse
+            let raw = String(data: data, encoding: .utf8) ?? "(binary)"
+            throw CLIError.connectionFailed("Invalid response: \(raw.prefix(500))")
         }
 
         // Check if the tool returned an error
