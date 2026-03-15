@@ -262,6 +262,20 @@ class SurfaceView: NSView {
             return
         }
 
+        // Selection-edit: Delete/Backspace removes selected text.
+        if !event.isARepeat,
+           !hasMarkedText(),
+           (event.keyCode == 0x33 || event.keyCode == 0x75),
+           let surface = surfaceController.surface,
+           GhosttyFFI.surfaceHasSelection(surface) {
+            let reader = GhosttySurfaceSelectionReader(surface: surface)
+            let dispatcher = GhosttyKeyDispatcher(surfaceController: surfaceController)
+            if SelectionEditHandler.handleSelectionEdit(
+                reader: reader, clipboard: nil, dispatcher: dispatcher,
+                copyToClipboard: false
+            ) { return }
+        }
+
         // Translate mods for option-as-alt handling.
         let translationModsGhostty = EventTranslator.modifierFlags(
             from: surfaceController.keyTranslationMods(
@@ -380,6 +394,21 @@ class SurfaceView: NSView {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard event.type == .keyDown else { return false }
         guard focused else { return false }
+
+        // Selection-edit: Cmd+X cuts selected text (takes precedence over bindings).
+        if event.charactersIgnoringModifiers == "x",
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           !event.isARepeat,
+           let surfaceController, let surface = surfaceController.surface,
+           GhosttyFFI.surfaceHasSelection(surface) {
+            let reader = GhosttySurfaceSelectionReader(surface: surface)
+            let clipboard = SystemClipboardWriter()
+            let dispatcher = GhosttyKeyDispatcher(surfaceController: surfaceController)
+            if SelectionEditHandler.handleSelectionEdit(
+                reader: reader, clipboard: clipboard, dispatcher: dispatcher,
+                copyToClipboard: true
+            ) { return true }
+        }
 
         // If the event matches a surface-level keybind, send it to keyDown.
         if let surfaceController, surfaceController.surface != nil {
