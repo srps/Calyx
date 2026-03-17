@@ -675,7 +675,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showAboutPanel() {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationVersion: "Version \(version)"
+            .version: "",
+            .applicationVersion: version
         ])
     }
 
