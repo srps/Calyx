@@ -1713,7 +1713,11 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
-        controller.sendText(payload + "\r")
+        controller.sendText(payload)
+        // Send Enter separately so it's not consumed by bracketed paste mode
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            controller.sendText("\r")
+        }
 
         // Switch to the target terminal tab
         switchToTab(id: targetTab.id)
