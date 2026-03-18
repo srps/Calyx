@@ -60,4 +60,10 @@ enum AccessibilityID {
         static let content = "calyx.diff.content"
         static let lineNumberGutter = "calyx.diff.lineNumbers"
     }
+    enum DiffReview {
+        static let submitButton = "calyx.diff.review.submitButton"
+        static let discardButton = "calyx.diff.review.discardButton"
+        static let commentBadge = "calyx.diff.review.commentBadge"
+        static let commentPopover = "calyx.diff.review.commentPopover"
+    }
 }
