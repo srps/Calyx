@@ -1657,10 +1657,17 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     private func submitDiffReview(tabID: UUID) {
         guard let store = reviewStores[tabID], store.hasUnsubmittedComments else { return }
 
-        // Check IPC enabled
-        guard CalyxMCPServer.shared.isRunning else {
-            showIPCAlert(title: "IPC Not Enabled", message: "IPC not enabled. Enable from Command Palette.")
-            return
+        // Check IPC enabled — offer to enable if not
+        if !CalyxMCPServer.shared.isRunning {
+            let alert = NSAlert()
+            alert.messageText = "IPC Not Enabled"
+            alert.informativeText = "Review submission requires IPC. Enable IPC now?"
+            alert.addButton(withTitle: "Enable IPC")
+            alert.addButton(withTitle: "Cancel")
+            let response = alert.runModal()
+            guard response == .alertFirstButtonReturn else { return }
+            enableIPC()
+            guard CalyxMCPServer.shared.isRunning else { return }
         }
 
         // Get file path from tab
@@ -1692,7 +1699,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
             let candidates = peers.filter { $0.id != appPeerID }
 
             guard !candidates.isEmpty else {
-                showIPCAlert(title: "No Peers", message: "No Claude Code peers found. Start Claude Code with IPC enabled.")
+                showIPCAlert(title: "No Peers", message: "No Claude Code instances connected. Restart Claude Code after enabling IPC.")
                 return
             }
 

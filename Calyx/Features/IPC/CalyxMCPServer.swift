@@ -198,7 +198,10 @@ final class CalyxMCPServer {
         // 4. Route by method
         switch request.method {
         case "initialize":
-            let resp = MCPRouter.buildInitializeResponse(id: requestId)
+            // Auto-register the connecting client as a peer
+            let clientName = extractClientName(from: request.params) ?? "claude-code"
+            let peer = await store.registerPeer(name: clientName, role: "claude-code")
+            let resp = MCPRouter.buildInitializeResponse(id: requestId, peerID: peer.id)
             return (200, encode(resp))
 
         case "tools/list":
@@ -454,5 +457,15 @@ final class CalyxMCPServer {
             return nil
         }
         return obj
+    }
+
+    /// Extract the client name from an initialize request's clientInfo.
+    private func extractClientName(from params: [String: AnyCodable]?) -> String? {
+        guard let params,
+              let clientInfoDict = extractDict(params, "clientInfo"),
+              let name = clientInfoDict["name"] as? String else {
+            return nil
+        }
+        return name
     }
 }

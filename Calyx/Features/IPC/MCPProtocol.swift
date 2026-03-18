@@ -360,14 +360,19 @@ struct MCPRouter: Sendable {
     """
 
     /// Build the response for `initialize`.
-    static func buildInitializeResponse(id: JSONRPCId) -> JSONRPCResponse {
+    static func buildInitializeResponse(id: JSONRPCId, peerID: UUID? = nil) -> JSONRPCResponse {
+        var fullInstructions = instructions
+        if let peerID {
+            fullInstructions += "\n\nYour peer_id is: \(peerID.uuidString). Use this in send_message, receive_messages, and other peer tools."
+        }
+
         let initResult = MCPInitializeResult(
             protocolVersion: "2024-11-05",
             capabilities: MCPCapabilities(
                 tools: MCPToolsCapability(listChanged: false)
             ),
             serverInfo: MCPServerInfo(name: "calyx-ipc", version: "1.0.0"),
-            instructions: instructions
+            instructions: fullInstructions
         )
 
         return JSONRPCResponse(
