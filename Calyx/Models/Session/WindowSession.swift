@@ -25,11 +25,10 @@ class WindowSession: Identifiable {
     var expandedCommitIDs: Set<String> = []
     var commitFiles: [String: [CommitFileEntry]] = [:]
     var repoRoots: [String: String] = [:]
-    var sidebarWidth: CGFloat = 220
+    var sidebarWidth: CGFloat = SidebarLayout.defaultWidth
 
-    // Note: These values are also hardcoded in SessionSnapshot.init(from:) due to actor isolation.
-    static let minSidebarWidth: CGFloat = 150
-    static let maxSidebarWidth: CGFloat = 500
+    static let minSidebarWidth: CGFloat = SidebarLayout.minWidth
+    static let maxSidebarWidth: CGFloat = SidebarLayout.maxWidth
 
     var activeGroup: TabGroup? {
         groups.first { $0.id == activeGroupID }
@@ -41,7 +40,7 @@ class WindowSession: Identifiable {
         activeGroupID: UUID? = nil,
         showSidebar: Bool = true,
         showCommandPalette: Bool = false,
-        sidebarWidth: CGFloat = 220
+        sidebarWidth: CGFloat = SidebarLayout.defaultWidth
     ) {
         self.id = id
         self.groups = groups

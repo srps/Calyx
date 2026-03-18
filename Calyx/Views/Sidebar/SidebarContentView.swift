@@ -99,7 +99,7 @@ struct SidebarContentView: View {
                 .padding(.top, 10)
             }
         }
-        .frame(minWidth: 200)
+        .frame(minWidth: SidebarLayout.minWidth)
         .modifier(SidebarBackgroundModifier(reduceTransparency: reduceTransparency))
         .accessibilityIdentifier(AccessibilityID.Sidebar.container)
     }

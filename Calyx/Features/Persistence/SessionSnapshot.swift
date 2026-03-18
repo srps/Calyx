@@ -37,7 +37,7 @@ struct WindowSnapshot: Codable, Equatable {
         case id, frame, groups, activeGroupID, showSidebar, sidebarWidth
     }
 
-    init(id: UUID = UUID(), frame: CGRect = .zero, groups: [TabGroupSnapshot] = [], activeGroupID: UUID? = nil, showSidebar: Bool = true, sidebarWidth: CGFloat = 220) {
+    init(id: UUID = UUID(), frame: CGRect = .zero, groups: [TabGroupSnapshot] = [], activeGroupID: UUID? = nil, showSidebar: Bool = true, sidebarWidth: CGFloat = SidebarLayout.defaultWidth) {
         self.id = id
         self.frame = frame
         self.groups = groups
@@ -53,8 +53,8 @@ struct WindowSnapshot: Codable, Equatable {
         groups = try container.decode([TabGroupSnapshot].self, forKey: .groups)
         activeGroupID = try container.decodeIfPresent(UUID.self, forKey: .activeGroupID)
         showSidebar = try container.decodeIfPresent(Bool.self, forKey: .showSidebar) ?? true
-        let rawWidth = try container.decodeIfPresent(CGFloat.self, forKey: .sidebarWidth) ?? 220
-        sidebarWidth = rawWidth.isFinite ? max(150, min(500, rawWidth)) : 220
+        let rawWidth = try container.decodeIfPresent(CGFloat.self, forKey: .sidebarWidth) ?? SidebarLayout.defaultWidth
+        sidebarWidth = SidebarLayout.clampWidth(rawWidth)
     }
 
     func clampedToScreen(screenFrame: CGRect) -> WindowSnapshot {

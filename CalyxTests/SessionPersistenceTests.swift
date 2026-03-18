@@ -515,7 +515,7 @@ final class SessionPersistenceTests: XCTestCase {
                        "Missing sidebarWidth should default to 220 for v3 backward compat")
     }
 
-    /// sidebarWidth values outside valid range [150, 500] should be clamped on decode.
+    /// sidebarWidth values outside valid range [200, 500] should be clamped on decode.
     func test_sidebarWidth_clamped_on_decode() throws {
         // Helper to build a single-window JSON with a given sidebarWidth
         func windowJSON(sidebarWidth: Int) -> String {
@@ -536,11 +536,11 @@ final class SessionPersistenceTests: XCTestCase {
             """
         }
 
-        // 0 should be clamped to minSidebarWidth (150)
+        // 0 should be clamped to minSidebarWidth (200)
         let zeroData = Data(windowJSON(sidebarWidth: 0).utf8)
         let zeroDecoded = try JSONDecoder().decode(SessionSnapshot.self, from: zeroData)
-        XCTAssertEqual(zeroDecoded.windows[0].sidebarWidth, 150, accuracy: 0.001,
-                       "sidebarWidth of 0 should be clamped to 150")
+        XCTAssertEqual(zeroDecoded.windows[0].sidebarWidth, 200, accuracy: 0.001,
+                       "sidebarWidth of 0 should be clamped to 200")
 
         // 9999 should be clamped to maxSidebarWidth (500)
         let bigData = Data(windowJSON(sidebarWidth: 9999).utf8)
@@ -548,11 +548,11 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(bigDecoded.windows[0].sidebarWidth, 500, accuracy: 0.001,
                        "sidebarWidth of 9999 should be clamped to 500")
 
-        // -100 should be clamped to minSidebarWidth (150)
+        // -100 should be clamped to minSidebarWidth (200)
         let negData = Data(windowJSON(sidebarWidth: -100).utf8)
         let negDecoded = try JSONDecoder().decode(SessionSnapshot.self, from: negData)
-        XCTAssertEqual(negDecoded.windows[0].sidebarWidth, 150, accuracy: 0.001,
-                       "sidebarWidth of -100 should be clamped to 150")
+        XCTAssertEqual(negDecoded.windows[0].sidebarWidth, 200, accuracy: 0.001,
+                       "sidebarWidth of -100 should be clamped to 200")
     }
 
     /// WindowSession with sidebarWidth=350 should produce a snapshot with sidebarWidth=350.
@@ -565,5 +565,28 @@ final class SessionPersistenceTests: XCTestCase {
 
         XCTAssertEqual(snap.sidebarWidth, 350, accuracy: 0.001,
                        "Snapshot should capture sidebarWidth from WindowSession")
+    }
+
+    /// Legacy sessions saved with minSidebarWidth=150 should be clamped up to 200.
+    func test_sidebarWidth_legacy150_clamped_to_200() throws {
+        let json = """
+        {
+            "schemaVersion": 4,
+            "windows": [
+                {
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "frame": [[0, 0], [800, 600]],
+                    "groups": [],
+                    "activeGroupID": null,
+                    "showSidebar": true,
+                    "sidebarWidth": 150
+                }
+            ]
+        }
+        """
+        let data = Data(json.utf8)
+        let snapshot = try JSONDecoder().decode(SessionSnapshot.self, from: data)
+        XCTAssertEqual(snapshot.windows[0].sidebarWidth, 200, accuracy: 0.001,
+                       "Legacy sidebarWidth of 150 should be clamped to new minimum of 200")
     }
 }
