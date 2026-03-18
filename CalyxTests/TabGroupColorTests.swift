@@ -51,4 +51,15 @@ final class TabGroupColorTests: XCTestCase {
         let result = TabGroupColor.nextColor(excluding: [.orange])
         XCTAssertEqual(result, .red, "Should return .red since it is unused and first in allCases order")
     }
+
+    /// When all 10 colors are used exactly once (exact tie), returns
+    /// the first color in allCases order (.red).
+    func test_nextColor_allUsedEqualFrequency_returnsFirst() {
+        let allOnce: [TabGroupColor] = [
+            .red, .orange, .yellow, .green, .mint,
+            .teal, .cyan, .blue, .indigo, .purple,
+        ]
+        let result = TabGroupColor.nextColor(excluding: allOnce)
+        XCTAssertEqual(result, .red, "Equal frequency tie should return .red (first in allCases)")
+    }
 }
