@@ -13,6 +13,7 @@ struct MainContentView: View {
     var activeBrowserController: BrowserTabController?
     var activeDiffState: DiffLoadState?
     var activeDiffSource: DiffSource?
+    var activeDiffReviewStore: DiffReviewStore?
 
     @Binding var sidebarMode: SidebarMode
     var gitChangesState: GitChangesState = .notLoaded
@@ -38,6 +39,8 @@ struct MainContentView: View {
     var onCollapseToggled: (() -> Void)?
     var onCloseAllTabsInGroup: ((UUID) -> Void)?
     var onSidebarDragCommitted: (() -> Void)?
+    var onSubmitReview: (() -> Void)?
+    var onDiscardReview: (() -> Void)?
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @AppStorage("terminalGlassOpacity") private var glassOpacity = 0.7
@@ -103,7 +106,12 @@ struct MainContentView: View {
 
                         if let diffSource = activeDiffSource, let diffState = activeDiffState {
                             VStack(spacing: 0) {
-                                DiffToolbarView(source: diffSource)
+                                DiffToolbarView(
+                                    source: diffSource,
+                                    reviewStore: activeDiffReviewStore,
+                                    onSubmitReview: onSubmitReview,
+                                    onDiscardReview: onDiscardReview
+                                )
                                 switch diffState {
                                 case .loading:
                                     VStack {
@@ -115,7 +123,8 @@ struct MainContentView: View {
                                     DiffGlassContentView(
                                         diff: diff,
                                         reduceTransparency: reduceTransparency,
-                                        glassOpacity: glassOpacity
+                                        glassOpacity: glassOpacity,
+                                        reviewStore: activeDiffReviewStore
                                     )
                                         .accessibilityIdentifier(AccessibilityID.Diff.content)
                                 case .error(let message):
@@ -205,12 +214,14 @@ struct DiffGlassContentView: NSViewRepresentable {
     let diff: FileDiff
     let reduceTransparency: Bool
     let glassOpacity: Double
+    var reviewStore: DiffReviewStore?
 
     func makeNSView(context: Context) -> DiffGlassHostView {
         let host = DiffGlassHostView(
             reduceTransparency: reduceTransparency,
             glassOpacity: glassOpacity
         )
+        host.diffView.reviewStore = reviewStore
         host.diffView.display(diff: diff)
         return host
     }
@@ -220,8 +231,12 @@ struct DiffGlassContentView: NSViewRepresentable {
             reduceTransparency: reduceTransparency,
             glassOpacity: glassOpacity
         )
+        nsView.diffView.reviewStore = reviewStore
         if nsView.diffView.currentDiff != diff {
             nsView.diffView.display(diff: diff)
+        } else {
+            // Diff unchanged but comments may have changed (submit/discard)
+            nsView.diffView.redisplayWithComments()
         }
     }
 }

@@ -20,6 +20,8 @@ final class CalyxMCPServer {
     private(set) var port: Int = 0
     private(set) var token: String = ""
     let store = IPCStore()
+    private(set) var appPeerID: UUID?
+    private var peerRegistrationTask: Task<Void, Never>?
 
     // MARK: - Private
 
@@ -70,6 +72,10 @@ final class CalyxMCPServer {
                 self.listener = nl
                 self.port = tryPort
                 self.isRunning = true
+                self.peerRegistrationTask = Task {
+                    let peer = await self.store.registerPeer(name: "calyx-app", role: "review-ui")
+                    self.appPeerID = peer.id
+                }
                 return
             } catch {
                 lastError = error
@@ -91,8 +97,17 @@ final class CalyxMCPServer {
         listener?.cancel()
         listener = nil
         isRunning = false
+        appPeerID = nil
+        peerRegistrationTask?.cancel()
+        peerRegistrationTask = nil
         port = 0
         Task { await store.cleanup() }
+    }
+
+    /// Ensures the app peer is registered before proceeding.
+    /// Call this before accessing `appPeerID` from async contexts.
+    func ensureAppPeerRegistered() async {
+        await peerRegistrationTask?.value
     }
 
     // MARK: - Connection Handling

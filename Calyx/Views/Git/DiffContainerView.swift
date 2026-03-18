@@ -41,6 +41,9 @@ struct DiffContainerView: View {
 
 struct DiffToolbarView: View {
     let source: DiffSource
+    var reviewStore: DiffReviewStore?
+    var onSubmitReview: (() -> Void)?
+    var onDiscardReview: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -74,6 +77,30 @@ struct DiffToolbarView: View {
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
+
+            // Review buttons (only shown when comments exist)
+            if let store = reviewStore, store.hasUnsubmittedComments {
+                Text("\(store.comments.count) comments")
+                    .font(.caption)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.blue.opacity(0.2)))
+                    .foregroundStyle(.blue)
+                    .accessibilityIdentifier(AccessibilityID.DiffReview.commentBadge)
+
+                Button("Submit Review") {
+                    onSubmitReview?()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .accessibilityIdentifier(AccessibilityID.DiffReview.submitButton)
+
+                Button("Discard") {
+                    onDiscardReview?()
+                }
+                .controlSize(.small)
+                .accessibilityIdentifier(AccessibilityID.DiffReview.discardButton)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -92,14 +119,17 @@ struct DiffToolbarView: View {
 
 struct DiffViewRepresentable: NSViewRepresentable {
     let diff: FileDiff
+    var reviewStore: DiffReviewStore?
 
     func makeNSView(context: Context) -> DiffView {
         let view = DiffView(frame: .zero)
+        view.reviewStore = reviewStore
         view.display(diff: diff)
         return view
     }
 
     func updateNSView(_ nsView: DiffView, context: Context) {
+        nsView.reviewStore = reviewStore
         // Only re-render if diff changed
         if nsView.currentDiff != diff {
             nsView.display(diff: diff)

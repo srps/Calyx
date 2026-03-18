@@ -25,6 +25,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     private var loadMoreTask: Task<Void, Never>?
     private var expandTasks: [String: Task<Void, Never>] = [:]
     private var hasMoreCommits = true
+    private var reviewStores: [UUID: DiffReviewStore] = [:]
 
     // MARK: - Computed Properties
 
@@ -53,6 +54,11 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     private var activeDiffSource: DiffSource? {
         guard let tab = activeTab, case .diff(let source) = tab.content else { return nil }
         return source
+    }
+
+    private var activeDiffReviewStore: DiffReviewStore? {
+        guard let tab = activeTab, case .diff = tab.content else { return nil }
+        return reviewStores[tab.id]
     }
 
     private func browserController(for tabID: UUID) -> BrowserTabController? {
@@ -323,6 +329,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
             activeBrowserController: activeBrowserController,
             activeDiffState: activeDiffState,
             activeDiffSource: activeDiffSource,
+            activeDiffReviewStore: activeDiffReviewStore,
             sidebarMode: Binding(
                 get: { [weak self] in self?.windowSession.sidebarMode ?? .tabs },
                 set: { [weak self] in
@@ -353,7 +360,18 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
             onSidebarWidthChanged: { [weak self] width in self?.windowSession.sidebarWidth = width },
             onCollapseToggled: { [weak self] in self?.requestSave() },
             onCloseAllTabsInGroup: { [weak self] groupID in self?.closeAllTabsInGroup(id: groupID) },
-            onSidebarDragCommitted: { [weak self] in self?.requestSave() }
+            onSidebarDragCommitted: { [weak self] in self?.requestSave() },
+            onSubmitReview: { [weak self] in
+                guard let self, let tab = self.activeTab else { return }
+                self.submitDiffReview(tabID: tab.id)
+            },
+            onDiscardReview: { [weak self] in
+                guard let self, let tab = self.activeTab else { return }
+                if let store = self.reviewStores[tab.id] {
+                    store.clearAll()
+                    self.refreshHostingView()
+                }
+            }
         )
     }
 
@@ -537,6 +555,19 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         }) else { return }
         guard let tab = group.tabs.first(where: { $0.id == tabID }) else { return }
 
+        // Check for unsent review comments
+        if let store = reviewStores[tabID], store.hasUnsubmittedComments {
+            let alert = NSAlert()
+            alert.messageText = "Unsent Review Comments"
+            alert.informativeText = "This diff tab has \(store.comments.count) unsent review comment(s). Closing will discard them."
+            alert.addButton(withTitle: "Discard & Close")
+            alert.addButton(withTitle: "Cancel")
+            let response = alert.runModal()
+            if response != .alertFirstButtonReturn {
+                return
+            }
+        }
+
         closingTabIDs.insert(tabID)
 
         // Clean up browser controller if present
@@ -546,6 +577,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         diffTasks[tabID]?.cancel()
         diffTasks.removeValue(forKey: tabID)
         diffStates.removeValue(forKey: tabID)
+        reviewStores.removeValue(forKey: tabID)
 
         // Destroy all surfaces in the tab
         for surfaceID in tab.registry.allIDs {
@@ -651,6 +683,9 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
             diffStates.removeValue(forKey: tabID)
         }
         for tabID in tabIDs {
+            reviewStores.removeValue(forKey: tabID)
+        }
+        for tabID in tabIDs {
             closingTabIDs.insert(tabID)
         }
 
@@ -693,6 +728,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
             diffTasks[tabID]?.cancel()
             diffTasks.removeValue(forKey: tabID)
             diffStates.removeValue(forKey: tabID)
+            reviewStores.removeValue(forKey: tabID)
             closingTabIDs.insert(tabID)
         }
 
@@ -1325,6 +1361,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         for (_, task) in diffTasks { task.cancel() }
         diffTasks.removeAll()
         diffStates.removeAll()
+        reviewStores.removeAll()
         for (_, task) in expandTasks { task.cancel() }
         expandTasks.removeAll()
         refreshTask?.cancel()
@@ -1492,6 +1529,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         group.activeTabID = tab.id
 
         diffStates[tab.id] = .loading
+        reviewStores[tab.id] = DiffReviewStore()
         refreshHostingView()
 
         let tabID = tab.id
@@ -1609,6 +1647,88 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
             label(result.claudeCode, name: "Claude Code"),
             label(result.codex, name: "Codex")
         ].joined(separator: "\n")
+    }
+
+    private func submitDiffReview(tabID: UUID) {
+        guard let store = reviewStores[tabID], store.hasUnsubmittedComments else { return }
+
+        // Check IPC enabled
+        guard CalyxMCPServer.shared.isRunning else {
+            showIPCAlert(title: "IPC Not Enabled", message: "IPC not enabled. Enable from Command Palette.")
+            return
+        }
+
+        // Get file path from tab
+        guard let tab = windowSession.groups.flatMap(\.tabs).first(where: { $0.id == tabID }),
+              case .diff(let source) = tab.content else { return }
+        let filePath: String
+        switch source {
+        case .unstaged(let p, _), .staged(let p, _), .commit(_, let p, _):
+            filePath = p
+        }
+
+        let payload = store.formatForSubmission(filePath: filePath)
+
+        // Check payload size
+        guard payload.utf8.count <= 65536 else {
+            showIPCAlert(title: "Review Too Large", message: "Review content exceeds 64KB limit. Reduce comment count or length.")
+            return
+        }
+
+        Task {
+            // Ensure app peer registration is complete before proceeding
+            await CalyxMCPServer.shared.ensureAppPeerRegistered()
+            guard let appPeerID = CalyxMCPServer.shared.appPeerID else {
+                showIPCAlert(title: "Peer Error", message: "App peer not registered.")
+                return
+            }
+
+            let peers = await CalyxMCPServer.shared.store.listPeers()
+            let candidates = peers.filter { $0.id != appPeerID }
+
+            guard !candidates.isEmpty else {
+                showIPCAlert(title: "No Peers", message: "No Claude Code peers found. Start Claude Code with IPC enabled.")
+                return
+            }
+
+            let targetPeerID: UUID
+            if candidates.count == 1 {
+                targetPeerID = candidates[0].id
+            } else {
+                // Show peer selection dialog
+                let alert = NSAlert()
+                alert.messageText = "Select Peer"
+                alert.informativeText = "Choose which Claude Code instance to send the review to:"
+                alert.addButton(withTitle: "Send")
+                alert.addButton(withTitle: "Cancel")
+
+                let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+                for peer in candidates {
+                    popup.addItem(withTitle: "\(peer.name) (\(peer.role))")
+                    popup.lastItem?.tag = candidates.firstIndex(where: { $0.id == peer.id }) ?? 0
+                }
+                alert.accessoryView = popup
+
+                let response = alert.runModal()
+                guard response == .alertFirstButtonReturn else { return }
+
+                let selectedIndex = popup.indexOfSelectedItem
+                guard selectedIndex >= 0, selectedIndex < candidates.count else { return }
+                targetPeerID = candidates[selectedIndex].id
+            }
+
+            do {
+                _ = try await CalyxMCPServer.shared.store.sendMessage(
+                    from: appPeerID,
+                    to: targetPeerID,
+                    content: payload
+                )
+                store.clearAll()
+                refreshHostingView()
+            } catch {
+                showIPCAlert(title: "Send Failed", message: error.localizedDescription)
+            }
+        }
     }
 
     private func showIPCAlert(title: String, message: String) {
