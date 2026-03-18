@@ -437,8 +437,18 @@ final class DiffLineNumberView: NSRulerView {
             case .commentBlock:
                 // Draw blue background band for comment lines
                 let bandRect = NSRect(x: 0, y: y, width: bounds.width - 1, height: lineRect.height)
-                NSColor.systemBlue.withAlphaComponent(0.08).setFill()
+                NSColor.systemBlue.withAlphaComponent(0.15).setFill()
                 bandRect.fill()
+
+                // Draw pencil icon to indicate editable
+                let iconStr = "✏️" as NSString
+                let iconAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 11),
+                ]
+                let iconSize = iconStr.size(withAttributes: iconAttrs)
+                let iconX = (bounds.width - iconSize.width) / 2
+                let iconY = y + (lineRect.height - iconSize.height) / 2
+                iconStr.draw(at: NSPoint(x: iconX, y: iconY), withAttributes: iconAttrs)
             }
         }
     }
