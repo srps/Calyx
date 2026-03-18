@@ -1717,7 +1717,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
 
         controller.sendText(payload)
         // Send Enter twice as key events: first to confirm paste, second to submit
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             var keyEvent = ghostty_input_key_s()
             keyEvent.keycode = 0x24 // macOS keycode for Return/Enter
             keyEvent.mods = GHOSTTY_MODS_NONE
@@ -1732,8 +1732,8 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
             keyEvent.action = GHOSTTY_ACTION_RELEASE
             controller.sendKey(keyEvent)
 
-            // Second Enter (after brief delay)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            // Second Enter
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 keyEvent.action = GHOSTTY_ACTION_PRESS
                 controller.sendKey(keyEvent)
                 keyEvent.action = GHOSTTY_ACTION_RELEASE
