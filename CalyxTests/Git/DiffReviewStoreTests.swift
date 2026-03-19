@@ -351,3 +351,177 @@ struct DiffReviewStoreDisplayLineTests {
         }
     }
 }
+
+// MARK: - Multi-File Format Tests
+
+@MainActor
+@Suite("DiffReviewStore Multi-File Format Tests")
+struct DiffReviewStoreMultiFileFormatTests {
+
+    @Test func test_formatAllForSubmission_multipleFiles_sortedByPath() {
+        // Two stores with different file paths, verify output sorted by path
+        let storeB = DiffReviewStore()
+        storeB.addComment(lineIndex: 0, lineNumber: 10, oldLineNumber: nil, lineType: .addition, text: "comment on B")
+        let storeA = DiffReviewStore()
+        storeA.addComment(lineIndex: 0, lineNumber: 5, oldLineNumber: nil, lineType: .addition, text: "comment on A")
+
+        let entries: [(source: DiffSource, store: DiffReviewStore)] = [
+            (.staged(path: "src/B.swift", workDir: "/tmp"), storeB),
+            (.staged(path: "src/A.swift", workDir: "/tmp"), storeA),
+        ]
+
+        let output = DiffReviewStore.formatAllForSubmission(entries)
+
+        // A.swift should appear before B.swift
+        let aRange = output.range(of: "src/A.swift")!
+        let bRange = output.range(of: "src/B.swift")!
+        #expect(aRange.lowerBound < bRange.lowerBound)
+        #expect(output.contains("[Code Review] 2 files"))
+    }
+
+    @Test func test_formatAllForSubmission_samePathDifferentSource_distinguished() {
+        // Same file path but staged vs unstaged → distinguished by source label
+        let storeSt = DiffReviewStore()
+        storeSt.addComment(lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .addition, text: "staged comment")
+        let storeUn = DiffReviewStore()
+        storeUn.addComment(lineIndex: 0, lineNumber: 2, oldLineNumber: nil, lineType: .addition, text: "unstaged comment")
+
+        let entries: [(source: DiffSource, store: DiffReviewStore)] = [
+            (.unstaged(path: "Models/User.swift", workDir: "/tmp"), storeUn),
+            (.staged(path: "Models/User.swift", workDir: "/tmp"), storeSt),
+        ]
+
+        let output = DiffReviewStore.formatAllForSubmission(entries)
+
+        #expect(output.contains("Models/User.swift (staged)"))
+        #expect(output.contains("Models/User.swift (unstaged)"))
+        // staged should come before unstaged in sort order
+        let stagedRange = output.range(of: "(staged)")!
+        let unstagedRange = output.range(of: "(unstaged)")!
+        #expect(stagedRange.lowerBound < unstagedRange.lowerBound)
+    }
+
+    @Test func test_formatAllForSubmission_skipsEmptyStores() {
+        let storeWithComments = DiffReviewStore()
+        storeWithComments.addComment(lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .addition, text: "has comment")
+        let emptyStore = DiffReviewStore()
+
+        let entries: [(source: DiffSource, store: DiffReviewStore)] = [
+            (.staged(path: "file1.swift", workDir: "/tmp"), storeWithComments),
+            (.staged(path: "file2.swift", workDir: "/tmp"), emptyStore),
+        ]
+
+        let output = DiffReviewStore.formatAllForSubmission(entries)
+
+        #expect(output.contains("file1.swift"))
+        #expect(!output.contains("file2.swift"))
+        #expect(output.contains("[Code Review] 1 file"))
+    }
+
+    @Test func test_formatAllForSubmission_singleFile() {
+        let store = DiffReviewStore()
+        store.addComment(lineIndex: 0, lineNumber: 42, oldLineNumber: nil, lineType: .addition, text: "single file comment")
+
+        let entries: [(source: DiffSource, store: DiffReviewStore)] = [
+            (.commit(hash: "a1b2c3d4e5f6", path: "Views/Main.swift", workDir: "/tmp"), store),
+        ]
+
+        let output = DiffReviewStore.formatAllForSubmission(entries)
+
+        #expect(output.contains("[Code Review] 1 file"))
+        #expect(output.contains("Views/Main.swift (a1b2c3d)"))
+        #expect(output.contains("L42 (+): single file comment"))
+    }
+
+    @Test func test_formatAllForSubmission_emptyInput() {
+        let output = DiffReviewStore.formatAllForSubmission([])
+        #expect(output.isEmpty)
+    }
+
+    @Test func test_formatAllForSubmission_commitSourceUsesShortHash() {
+        let store = DiffReviewStore()
+        store.addComment(lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .context, text: "note")
+
+        let entries: [(source: DiffSource, store: DiffReviewStore)] = [
+            (.commit(hash: "abcdef1234567890", path: "file.swift", workDir: "/tmp"), store),
+        ]
+
+        let output = DiffReviewStore.formatAllForSubmission(entries)
+        #expect(output.contains("(abcdef1)"))
+    }
+
+    @Test func test_formatAllForSubmission_untrackedSource() {
+        let store = DiffReviewStore()
+        store.addComment(lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .addition, text: "untracked note")
+
+        let entries: [(source: DiffSource, store: DiffReviewStore)] = [
+            (.untracked(path: "NewFile.swift", workDir: "/tmp"), store),
+        ]
+
+        let output = DiffReviewStore.formatAllForSubmission(entries)
+        #expect(output.contains("NewFile.swift (untracked)"))
+    }
+
+    @Test func test_formatAllForSubmission_commentsWithinFileSortedByLineIndex() {
+        let store = DiffReviewStore()
+        // Add in reverse order to verify intra-file sorting
+        store.addComment(lineIndex: 10, lineNumber: 50, oldLineNumber: nil, lineType: .addition, text: "later")
+        store.addComment(lineIndex: 2, lineNumber: 20, oldLineNumber: nil, lineType: .context, text: "earlier")
+
+        let entries: [(source: DiffSource, store: DiffReviewStore)] = [
+            (.staged(path: "file.swift", workDir: "/tmp"), store),
+        ]
+
+        let output = DiffReviewStore.formatAllForSubmission(entries)
+        let earlierRange = output.range(of: "earlier")!
+        let laterRange = output.range(of: "later")!
+        #expect(earlierRange.lowerBound < laterRange.lowerBound)
+    }
+
+    @Test func test_sanitizeForTerminal_removesC1ControlCharacters() {
+        let store = DiffReviewStore()
+        // CSI (0x9B) can initiate terminal escape sequences
+        store.addComment(lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .addition, text: "before\u{9B}31mafter")
+        #expect(store.comments[0].text == "before31mafter")
+    }
+}
+
+// MARK: - Sanitize Tests
+
+@MainActor
+@Suite("DiffReviewStore Sanitize Tests")
+struct DiffReviewStoreSanitizeTests {
+
+    @Test func test_sanitizeForTerminal_removesControlCharacters() {
+        let store = DiffReviewStore()
+        // ESC (0x1B), BEL (0x07), NULL (0x00)
+        store.addComment(lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .addition, text: "hello\u{1B}world\u{07}test\u{00}end")
+        #expect(store.comments[0].text == "helloworldtestend")
+    }
+
+    @Test func test_sanitizeForTerminal_convertsTabToSpace() {
+        let store = DiffReviewStore()
+        store.addComment(lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .addition, text: "before\tafter")
+        #expect(store.comments[0].text == "before after")
+    }
+
+    @Test func test_sanitizeForTerminal_preservesNormalText() {
+        let store = DiffReviewStore()
+        store.addComment(lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .addition, text: "Normal text with spaces & symbols! @#$%")
+        #expect(store.comments[0].text == "Normal text with spaces & symbols! @#$%")
+    }
+
+    @Test func test_sanitizeForTerminal_removesNewlines() {
+        let store = DiffReviewStore()
+        store.addComment(lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .addition, text: "line1\nline2\rline3")
+        #expect(store.comments[0].text == "line1line2line3")
+    }
+
+    @Test func test_updateComment_sanitizes() {
+        let store = DiffReviewStore()
+        store.addComment(lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .addition, text: "original")
+        let id = store.comments[0].id
+        store.updateComment(id: id, text: "updated\u{1B}\twith\u{07}control")
+        #expect(store.comments[0].text == "updated withcontrol")
+    }
+}

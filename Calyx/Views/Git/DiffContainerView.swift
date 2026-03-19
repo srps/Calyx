@@ -44,6 +44,10 @@ struct DiffToolbarView: View {
     var reviewStore: DiffReviewStore?
     var onSubmitReview: (() -> Void)?
     var onDiscardReview: (() -> Void)?
+    var totalReviewCommentCount: Int = 0
+    var reviewFileCount: Int = 0
+    var onSubmitAllReviews: (() -> Void)?
+    var onDiscardAllReviews: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -102,11 +106,30 @@ struct DiffToolbarView: View {
                 .controlSize(.small)
                 .accessibilityIdentifier(AccessibilityID.DiffReview.submitButton)
 
+                if reviewFileCount >= 2 {
+                    Button("Submit All (\(totalReviewCommentCount) in \(reviewFileCount) files)") {
+                        onSubmitAllReviews?()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+                    .controlSize(.small)
+                    .accessibilityIdentifier(AccessibilityID.DiffReview.submitAllButton)
+                }
+
                 Button("Discard") {
                     onDiscardReview?()
                 }
                 .controlSize(.small)
                 .accessibilityIdentifier(AccessibilityID.DiffReview.discardButton)
+
+                if reviewFileCount >= 2 {
+                    Button("Discard All") {
+                        onDiscardAllReviews?()
+                    }
+                    .controlSize(.small)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier(AccessibilityID.DiffReview.discardAllButton)
+                }
             }
         }
         .padding(.horizontal, 12)

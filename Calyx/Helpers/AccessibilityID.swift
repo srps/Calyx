@@ -65,5 +65,7 @@ enum AccessibilityID {
         static let discardButton = "calyx.diff.review.discardButton"
         static let commentBadge = "calyx.diff.review.commentBadge"
         static let commentPopover = "calyx.diff.review.commentPopover"
+        static let submitAllButton = "calyx.diff.review.submitAllButton"
+        static let discardAllButton = "calyx.diff.review.discardAllButton"
     }
 }

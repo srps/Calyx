@@ -61,6 +61,14 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         return reviewStores[tab.id]
     }
 
+    private var totalReviewCommentCount: Int {
+        reviewStores.values.filter { $0.hasUnsubmittedComments }.reduce(0) { $0 + $1.comments.count }
+    }
+
+    private var reviewFileCount: Int {
+        reviewStores.values.filter { $0.hasUnsubmittedComments }.count
+    }
+
     private func browserController(for tabID: UUID) -> BrowserTabController? {
         if let existing = browserControllers[tabID] { return existing }
         guard let tab = windowSession.groups.flatMap(\.tabs).first(where: { $0.id == tabID }),
@@ -265,6 +273,14 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         }) { [weak self] in
             self?.jumpToMostRecentUnreadTab()
         })
+        commandRegistry.register(Command(
+            id: "review.submitAll",
+            title: "Submit All Review Comments",
+            category: "Git",
+            isAvailable: { [weak self] in (self?.reviewFileCount ?? 0) >= 2 }
+        ) { [weak self] in
+            self?.submitAllDiffReviews()
+        })
     }
 
     private func setupUI() {
@@ -371,7 +387,15 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
                     store.clearAll()
                     self.refreshHostingView()
                 }
-            }
+            },
+            onSubmitAllReviews: { [weak self] in
+                self?.submitAllDiffReviews()
+            },
+            onDiscardAllReviews: { [weak self] in
+                self?.discardAllDiffReviews()
+            },
+            totalReviewCommentCount: totalReviewCommentCount,
+            reviewFileCount: reviewFileCount
         )
     }
 
@@ -1534,7 +1558,9 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         group.activeTabID = tab.id
 
         diffStates[tab.id] = .loading
-        reviewStores[tab.id] = DiffReviewStore()
+        let reviewStore = DiffReviewStore()
+        reviewStore.onCommentsChanged = { [weak self] in self?.refreshHostingView() }
+        reviewStores[tab.id] = reviewStore
         refreshHostingView()
 
         let tabID = tab.id
@@ -1654,21 +1680,8 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         ].joined(separator: "\n")
     }
 
-    private func submitDiffReview(tabID: UUID) {
-        guard let store = reviewStores[tabID], store.hasUnsubmittedComments else { return }
-
-        // Get file path from tab
-        guard let tab = windowSession.groups.flatMap(\.tabs).first(where: { $0.id == tabID }),
-              case .diff(let source) = tab.content else { return }
-        let filePath: String
-        switch source {
-        case .unstaged(let p, _), .staged(let p, _), .commit(_, let p, _), .untracked(let p, _):
-            filePath = p
-        }
-
-        let payload = store.formatForSubmission(filePath: filePath)
-
-        // Find terminal tabs running Claude Code (title contains "claude")
+    private func sendReviewToAgent(_ payload: String) -> ReviewSendResult {
+        // Find terminal tabs running Claude Code (title contains "claude" or "codex")
         let agentTabs = windowSession.groups.flatMap(\.tabs).filter {
             guard case .terminal = $0.content else { return false }
             let title = $0.title
@@ -1678,7 +1691,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
 
         guard !agentTabs.isEmpty else {
             showIPCAlert(title: "No AI Agent", message: "No terminal tabs running Claude Code or Codex found. Start an AI agent first.")
-            return
+            return .failed
         }
 
         // Select target tab
@@ -1701,10 +1714,10 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
             alert.accessoryView = popup
 
             let response = alert.runModal()
-            guard response == .alertFirstButtonReturn else { return }
+            guard response == .alertFirstButtonReturn else { return .cancelled }
 
             let selectedIndex = popup.indexOfSelectedItem
-            guard selectedIndex >= 0, selectedIndex < agentTabs.count else { return }
+            guard selectedIndex >= 0, selectedIndex < agentTabs.count else { return .failed }
             targetTab = agentTabs[selectedIndex]
         }
 
@@ -1712,7 +1725,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         guard let focusedID = targetTab.splitTree.focusedLeafID,
               let controller = targetTab.registry.controller(for: focusedID) else {
             showIPCAlert(title: "Send Failed", message: "Could not access terminal surface.")
-            return
+            return .failed
         }
 
         controller.sendText(payload)
@@ -1744,7 +1757,63 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         // Switch to the target terminal tab
         switchToTab(id: targetTab.id)
 
-        store.clearAll()
+        return .sent
+    }
+
+    private func submitDiffReview(tabID: UUID) {
+        guard let store = reviewStores[tabID], store.hasUnsubmittedComments else { return }
+
+        // Get file path from tab
+        guard let tab = windowSession.groups.flatMap(\.tabs).first(where: { $0.id == tabID }),
+              case .diff(let source) = tab.content else { return }
+        let filePath: String
+        switch source {
+        case .unstaged(let p, _), .staged(let p, _), .commit(_, let p, _), .untracked(let p, _):
+            filePath = p
+        }
+
+        let payload = store.formatForSubmission(filePath: filePath)
+        let result = sendReviewToAgent(payload)
+
+        if result == .sent {
+            store.clearAll()
+            refreshHostingView()
+        }
+    }
+
+    private func submitAllDiffReviews() {
+        // Collect all review stores with comments, paired with their DiffSource
+        let entries: [(source: DiffSource, store: DiffReviewStore)] = reviewStores.compactMap { tabID, store in
+            guard store.hasUnsubmittedComments else { return nil }
+            guard let tab = windowSession.groups.flatMap(\.tabs).first(where: { $0.id == tabID }),
+                  case .diff(let source) = tab.content else { return nil }
+            return (source: source, store: store)
+        }
+        guard !entries.isEmpty else { return }
+
+        let payload = DiffReviewStore.formatAllForSubmission(entries)
+        let result = sendReviewToAgent(payload)
+
+        if result == .sent {
+            for entry in entries { entry.store.clearAll() }
+            refreshHostingView()
+        }
+    }
+
+    private func discardAllDiffReviews() {
+        let storesWithComments = reviewStores.values.filter { $0.hasUnsubmittedComments }
+        guard !storesWithComments.isEmpty else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Discard All Review Comments"
+        alert.informativeText = "This will discard \(totalReviewCommentCount) comment(s) across \(reviewFileCount) file(s)."
+        alert.addButton(withTitle: "Discard All")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        for store in storesWithComments { store.clearAll() }
         refreshHostingView()
     }
 

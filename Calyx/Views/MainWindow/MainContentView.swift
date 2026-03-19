@@ -41,6 +41,10 @@ struct MainContentView: View {
     var onSidebarDragCommitted: (() -> Void)?
     var onSubmitReview: (() -> Void)?
     var onDiscardReview: (() -> Void)?
+    var onSubmitAllReviews: (() -> Void)?
+    var onDiscardAllReviews: (() -> Void)?
+    var totalReviewCommentCount: Int = 0
+    var reviewFileCount: Int = 0
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @AppStorage("terminalGlassOpacity") private var glassOpacity = 0.7
@@ -110,7 +114,11 @@ struct MainContentView: View {
                                     source: diffSource,
                                     reviewStore: activeDiffReviewStore,
                                     onSubmitReview: onSubmitReview,
-                                    onDiscardReview: onDiscardReview
+                                    onDiscardReview: onDiscardReview,
+                                    totalReviewCommentCount: totalReviewCommentCount,
+                                    reviewFileCount: reviewFileCount,
+                                    onSubmitAllReviews: onSubmitAllReviews,
+                                    onDiscardAllReviews: onDiscardAllReviews
                                 )
                                 switch diffState {
                                 case .loading:
