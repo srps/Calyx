@@ -567,7 +567,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Enable the global CGEvent tap if ghostty has global keybindings configured.
     /// This allows keybindings like quick terminal toggle to work from any app.
     private func installGlobalEventTap() {
-        if ProcessInfo.processInfo.arguments.contains("--uitesting") { return }
+        if ProcessInfo.processInfo.arguments.contains("--uitesting")
+            || NSClassFromString("XCTestCase") != nil { return }
         guard let app = GhosttyAppController.shared.app else {
             logger.warning("installGlobalEventTap: no ghostty app available")
             return
