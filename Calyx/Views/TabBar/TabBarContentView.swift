@@ -192,12 +192,29 @@ private struct TabBarWheelBridge: NSViewRepresentable {
 
 @MainActor
 private final class WheelBridgeView: NSView {
-    private var eventMonitor: Any?
+    nonisolated(unsafe) private var eventMonitor: Any?
     var onDoubleClickEmptyArea: (() -> Void)?
+
+    deinit {
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        installMonitorIfNeeded()
+        if window != nil {
+            installMonitorIfNeeded()
+        } else {
+            removeMonitor()
+        }
+    }
+
+    private func removeMonitor() {
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
+        }
     }
 
     private func installMonitorIfNeeded() {
@@ -209,6 +226,7 @@ private final class WheelBridgeView: NSView {
     }
 
     private func handle(event: NSEvent) -> NSEvent? {
+        guard event.window === self.window else { return event }
         switch event.type {
         case .scrollWheel:
             return handleScrollWheel(event)
