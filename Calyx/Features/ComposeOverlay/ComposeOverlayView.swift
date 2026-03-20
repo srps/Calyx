@@ -186,7 +186,11 @@ extension ComposeOverlayView: NSTextViewDelegate {
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         switch commandSelector {
         case #selector(NSResponder.insertNewline(_:)):
-            insertNewline(nil)
+            if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
+                insertNewlineIgnoringFieldEditor(nil)
+            } else {
+                insertNewline(nil)
+            }
             return true
         case #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
             insertNewlineIgnoringFieldEditor(nil)

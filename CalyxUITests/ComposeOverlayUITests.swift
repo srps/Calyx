@@ -71,4 +71,55 @@ final class ComposeOverlayUITests: CalyxUITestCase {
         // Dismiss
         app.typeKey(.escape, modifierFlags: [])
     }
+
+    func test_shiftEnterInsertsNewline() {
+        menuAction("Edit", item: "Compose Input")
+
+        let textView = composeTextView()
+        XCTAssertTrue(waitFor(textView, timeout: 3))
+
+        // Type text and press Shift+Enter for newline
+        textView.typeText("line1")
+        app.typeKey(.return, modifierFlags: [.shift])
+        textView.typeText("line2")
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Compose overlay should still be open (not sent)
+        XCTAssertTrue(textView.exists, "Shift+Enter should not dismiss compose overlay")
+
+        // Text should contain the newline (value includes both lines)
+        let value = textView.value as? String ?? ""
+        XCTAssertTrue(value.contains("line1"), "Text should contain first line")
+        XCTAssertTrue(value.contains("line2"), "Text should contain second line")
+
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
+    func test_enterSendsAndClearsText() {
+        menuAction("Edit", item: "Compose Input")
+
+        let textView = composeTextView()
+        XCTAssertTrue(waitFor(textView, timeout: 3))
+
+        // Type text and press Enter to send
+        textView.typeText("hello world")
+        Thread.sleep(forTimeInterval: 0.3)
+        app.typeKey(.return, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // Compose overlay should still be open (no dismiss on send)
+        XCTAssertTrue(textView.exists, "Compose overlay should stay open after send")
+
+        // Text should be cleared after send
+        let value = textView.value as? String ?? ""
+        XCTAssertTrue(value.isEmpty, "Text field should be cleared after Enter send")
+
+        // Placeholder should reappear
+        let placeholder = app.descendants(matching: .any)
+            .matching(identifier: "calyx.compose.placeholder")
+            .firstMatch
+        XCTAssertTrue(waitFor(placeholder, timeout: 2), "Placeholder should reappear after text is cleared")
+
+        app.typeKey(.escape, modifierFlags: [])
+    }
 }

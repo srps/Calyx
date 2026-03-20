@@ -91,6 +91,22 @@ final class ComposeOverlayViewTests: XCTestCase {
                       "onDismiss should fire when Escape (cancelOperation) is invoked")
     }
 
+    // ==================== 3.5. Enter Clears Text After Send ====================
+
+    func test_should_clear_text_after_send() {
+        // Arrange
+        let sut = makeSUT()
+        sut.onSend = { _ in }
+        sut.textView.string = "hello"
+
+        // Act
+        sut.insertNewline(nil)
+
+        // Assert
+        XCTAssertTrue(sut.textView.string.isEmpty,
+                      "Text should be cleared after Enter sends")
+    }
+
     // ==================== 4. Empty Text Is Not Sent ====================
 
     func test_should_not_send_empty_text() {
