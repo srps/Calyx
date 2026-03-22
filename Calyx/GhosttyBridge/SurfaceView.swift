@@ -648,33 +648,38 @@ class SurfaceView: NSView {
         mouseMoved(with: event)
     }
 
-    override func scrollWheel(with event: NSEvent) {
-        var x = event.scrollingDeltaX
-        var y = event.scrollingDeltaY
+    struct ScrollDelta: Equatable {
+        var x: Double
+        var y: Double
+    }
 
-        // 2x multiplier for precision scrolling (trackpad/Magic Mouse).
-        // Matches Ghostty behavior for responsive feel.
-        if event.hasPreciseScrollingDeltas {
+    /// Adjust scroll deltas for the ghostty core.
+    /// Precision scrolling (trackpad/Magic Mouse) gets a 2x multiplier
+    /// to match Ghostty's responsive feel. All other deltas pass through raw.
+    /// The ghostty core handles pixel-to-row conversion and remainder accumulation.
+    static func adjustScrollDeltas(
+        deltaX: Double,
+        deltaY: Double,
+        hasPreciseScrollingDeltas: Bool
+    ) -> ScrollDelta {
+        var x = deltaX
+        var y = deltaY
+        if hasPreciseScrollingDeltas {
             x *= 2
             y *= 2
         }
+        return ScrollDelta(x: x, y: y)
+    }
 
-        // Mouse wheels reporting precise deltas (phase/momentumPhase both empty)
-        // send a fixed pixel value per tick that may not match cell_height,
-        // causing fractional-line scrolling. Normalize to cell_height for 1 line/tick.
-        // Trackpad gestures (phase != []) and momentum pass raw for smooth scrolling.
-        if event.hasPreciseScrollingDeltas,
-           event.phase == [],
-           event.momentumPhase == [] {
-            let ch = cachedCellSize.height
-            if ch > 0 {
-                if y != 0 { y = copysign(ch, y) }
-                if x != 0 { x = copysign(cachedCellSize.width, x) }
-            }
-        }
+    override func scrollWheel(with event: NSEvent) {
+        let delta = Self.adjustScrollDeltas(
+            deltaX: event.scrollingDeltaX,
+            deltaY: event.scrollingDeltaY,
+            hasPreciseScrollingDeltas: event.hasPreciseScrollingDeltas
+        )
 
         let mods = EventTranslator.translateScrollMods(event)
-        surfaceController?.sendMouseScroll(x: x, y: y, mods: mods)
+        surfaceController?.sendMouseScroll(x: delta.x, y: delta.y, mods: mods)
     }
 
     override func pressureChange(with event: NSEvent) {
