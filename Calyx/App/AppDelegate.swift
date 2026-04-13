@@ -625,50 +625,137 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Actions
 
+    /// Action produced by `matchKeyEvent` when an `NSEvent` matches one of the
+    /// shortcuts handled by `installKeyMonitor`. The enum is exposed as a pure,
+    /// Equatable value so the matching logic can be unit-tested in isolation
+    /// from `AppDelegate`'s window-controller state (see
+    /// `CalyxTests/AppDelegateKeyMonitorTests.swift`).
+    ///
+    /// Cases:
+    /// - `commandPalette`: Cmd+Shift+P — toggle the command palette.
+    /// - `unreadTab`:      Cmd+Shift+U — jump to most recent unread tab.
+    /// - `nextTab`:        Cmd+Shift+] — select next tab (Issue #27).
+    /// - `previousTab`:    Cmd+Shift+[ — select previous tab (Issue #27).
+    /// - `selectTab(Int)`: Cmd+1..Cmd+9 — select tab at 0-based index.
+    /// - `debugSelect`:    Ctrl+Shift+D — UI-testing-only debug hook.
+    enum KeyMonitorAction: Equatable, Sendable {
+        case commandPalette
+        case unreadTab
+        case nextTab
+        case previousTab
+        case selectTab(Int)
+        case debugSelect
+    }
+
+    /// Translate a key-down `NSEvent` into a `KeyMonitorAction` that the local
+    /// event monitor should dispatch. Returns `nil` for any event that should
+    /// flow through to the first responder / main menu unchanged.
+    ///
+    /// This method is a pure function — it does not touch window-controller
+    /// state — so it can be driven directly from unit tests that fabricate
+    /// synthetic `NSEvent`s (see `AppDelegateKeyMonitorTests`).
+    ///
+    /// Modifier matching uses strict equality after intersecting with
+    /// `[.command, .shift, .control, .option]` so that incidental flags such
+    /// as `.capsLock`, `.numericPad`, or `.function` do not prevent a match.
+    ///
+    /// - Parameters:
+    ///   - event: The incoming `.keyDown` event.
+    ///   - isUITesting: Whether the process was launched with `--uitesting`.
+    ///     The `Ctrl+Shift+D` debug-select hook is only active in that mode.
+    /// - Returns: The action to perform, or `nil` to pass the event through.
+    static func matchKeyEvent(_ event: NSEvent, isUITesting: Bool) -> KeyMonitorAction? {
+        let mods = event.modifierFlags.intersection([.command, .shift, .control, .option])
+        let chars = event.charactersIgnoringModifiers
+        let lowered = chars?.lowercased()
+
+        // Cmd+Shift+P — command palette
+        if mods == [.command, .shift], lowered == "p" {
+            return .commandPalette
+        }
+
+        // Cmd+Shift+U — jump to most recent unread tab
+        if mods == [.command, .shift], lowered == "u" {
+            return .unreadTab
+        }
+
+        // Cmd+Shift+] — select next tab (Issue #27).
+        // Must be handled here (not just via the Window menu's key equivalent)
+        // because `NSTextView` in diff tabs would otherwise consume the event
+        // for its built-in `alignRight:` binding before the main menu fires.
+        //
+        // Matched by keyCode (not `charactersIgnoringModifiers`) because
+        // `charactersIgnoringModifiers` APPLIES Shift (per Apple docs: "as if
+        // no modifier key had been pressed, except for Shift"). So a real
+        // `Cmd+Shift+]` keystroke reports `"}"`, not `"]"`. KeyCode matching
+        // is also the project's convention for bracket shortcuts — see
+        // `CalyxWindowController.setupShortcutManager()` which matches the
+        // sibling `Ctrl+Shift+]` / `Ctrl+Shift+[` on the same physical keys.
+        // kVK_ANSI_RightBracket = 30 (from HIToolbox/Events.h).
+        if mods == [.command, .shift], event.keyCode == 30 {
+            return .nextTab
+        }
+
+        // Cmd+Shift+[ — select previous tab (Issue #27).
+        // Parallel reasoning to `.nextTab`: `NSTextView`'s `alignLeft:`
+        // binding would otherwise swallow the event on diff tabs.
+        // kVK_ANSI_LeftBracket = 33 (from HIToolbox/Events.h).
+        if mods == [.command, .shift], event.keyCode == 33 {
+            return .previousTab
+        }
+
+        // Cmd+1..Cmd+9 — select tab at 0-based index (no shift).
+        if mods == [.command],
+           let chars,
+           chars.count == 1,
+           let scalar = chars.unicodeScalars.first,
+           scalar.value >= 49, scalar.value <= 57 {
+            return .selectTab(Int(scalar.value - 49))
+        }
+
+        // Ctrl+Shift+D — UI-testing-only debug-select hook.
+        if isUITesting, mods == [.control, .shift], lowered == "d" {
+            return .debugSelect
+        }
+
+        return nil
+    }
+
     private func installKeyMonitor() {
         let isUITesting = ProcessInfo.processInfo.arguments.contains("--uitesting")
 
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            let mods = event.modifierFlags.intersection([.command, .shift, .control, .option])
-            if mods == [.command, .shift],
-               event.charactersIgnoringModifiers?.lowercased() == "p" {
-                if let wc = self?.windowControllers.first(where: { $0.window?.isKeyWindow == true }) {
-                    wc.toggleCommandPalette()
-                    return nil // consume the event
-                }
+            guard let self else { return event }
+            guard let action = AppDelegate.matchKeyEvent(event, isUITesting: isUITesting) else {
+                return event
             }
 
-            if mods == [.command, .shift],
-               event.charactersIgnoringModifiers?.lowercased() == "u" {
-                if let wc = self?.windowControllers.first(where: { $0.window?.isKeyWindow == true }) {
-                    wc.jumpToMostRecentUnreadTab()
-                    return nil
-                }
-            }
+            // All window-targeted actions require a key window. If none, fall
+            // through so the event can still reach the responder chain / menu.
+            let keyWC = self.windowControllers.first(where: { $0.window?.isKeyWindow == true })
 
-            if mods == [.command],
-               let chars = event.charactersIgnoringModifiers,
-               let scalar = chars.unicodeScalars.first,
-               chars.count == 1,
-               scalar.value >= 49 && scalar.value <= 57 {
-                let index = Int(scalar.value - 49)
-                if let wc = self?.windowControllers.first(where: { $0.window?.isKeyWindow == true }) {
-                    wc.selectTab(at: index)
-                    return nil // consume the event
-                }
-            }
-
-            // Debug Select: Ctrl+Shift+D — only in UI testing mode.
-            // Reads selection parameters from the pasteboard and simulates a mouse drag
-            // via ghostty FFI to create a terminal selection.
-            if isUITesting,
-               mods == [.control, .shift],
-               event.charactersIgnoringModifiers?.lowercased() == "d" {
-                self?.performDebugSelect()
+            switch action {
+            case .debugSelect:
+                // Reads selection parameters from the pasteboard and simulates
+                // a mouse drag via ghostty FFI to create a terminal selection.
+                // Does not require a key window.
+                self.performDebugSelect()
                 return nil
+            case .commandPalette, .unreadTab, .nextTab, .previousTab, .selectTab:
+                // All window-targeted actions require a key window. If none,
+                // fall through so the event can still reach the responder
+                // chain / menu.
+                guard let wc = keyWC else { return event }
+                switch action {
+                case .commandPalette:        wc.toggleCommandPalette()
+                case .unreadTab:             wc.jumpToMostRecentUnreadTab()
+                case .nextTab:               wc.selectNextTab(nil)
+                case .previousTab:           wc.selectPreviousTab(nil)
+                case .selectTab(let index):  wc.selectTab(at: index)
+                case .debugSelect:           break // unreachable; handled above
+                }
+                return nil // consume the event
             }
-
-            return event
         }
     }
 
