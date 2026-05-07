@@ -14,6 +14,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     private(set) var windowSession: WindowSession
     private var splitContainerView: SplitContainerView?
     private var hostingView: NSHostingView<MainContentView>?
+    private var wasOccluded = false
     private let commandRegistry = CommandRegistry()
     private var closingTabIDs: Set<UUID> = []
     private var focusRequestID: UInt64 = 0
@@ -433,6 +434,18 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
 
     private func refreshHostingView() {
         hostingView?.rootView = buildMainContentView()
+    }
+
+    private func recreateHostingView() {
+        guard let contentView = window?.contentView else { return }
+        let mainContent = buildMainContentView()
+        let newHosting = NSHostingView(rootView: mainContent)
+        newHosting.frame = contentView.bounds
+        newHosting.autoresizingMask = [.width, .height]
+        contentView.addSubview(newHosting)
+        newHosting.layoutSubtreeIfNeeded()
+        hostingView?.removeFromSuperview()
+        self.hostingView = newHosting
     }
 
     // MARK: - Split Container Management
@@ -1597,6 +1610,18 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         let scale = window.backingScaleFactor
         for id in tab.registry.allIDs {
             tab.registry.controller(for: id)?.setContentScale(scale)
+        }
+    }
+
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        guard let window = self.window else { return }
+        let nowVisible = window.occlusionState.contains(.visible)
+        let shouldRecreate = nowVisible && wasOccluded
+        wasOccluded = !nowVisible
+        guard shouldRecreate else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.recreateHostingView()
+            self?.restoreFocus()
         }
     }
 
