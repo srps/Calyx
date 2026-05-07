@@ -332,17 +332,6 @@ private struct TabBarBackgroundModifier: ViewModifier {
                         .fill(GlassTheme.specularStroke.opacity(0.28))
                         .frame(height: 1)
                 }
-                .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.20), Color.clear],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(height: 18)
-                }
                 .environment(\.colorScheme, chromeScheme)
                 .foregroundStyle(themePreset == "ghostty"
                     ? AnyShapeStyle(Color(nsColor: ghosttyProvider.ghosttyForeground))

@@ -159,15 +159,6 @@ private struct SidebarBackgroundModifier: ViewModifier {
                         .fill(GlassTheme.specularStroke.opacity(0.30))
                         .frame(width: 1)
                 }
-                .overlay(alignment: .topLeading) {
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.20), Color.clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 32)
-                    .allowsHitTesting(false)
-                }
                 .environment(\.colorScheme, chromeScheme)
                 .foregroundStyle(themePreset == "ghostty"
                     ? AnyShapeStyle(Color(nsColor: ghosttyProvider.ghosttyForeground))
