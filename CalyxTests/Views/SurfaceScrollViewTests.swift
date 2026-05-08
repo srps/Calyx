@@ -231,4 +231,20 @@ struct SurfaceScrollViewTests {
         let result = SurfaceScrollView.shouldFlashScrollers(lastFlashTime: 0, now: 0.001)
         #expect(result == true)
     }
+
+    // MARK: - Preferred Scroller Style Notification Observer
+
+    @Test("scrollerStyle is restored to overlay after preferred style change notification")
+    func scrollerStyleRestoredAfterPreferredStyleChangeNotification() {
+        let surfaceView = SurfaceView(frame: .zero)
+        let sut = SurfaceScrollView(surfaceView: surfaceView)
+        sut.scrollView.scrollerStyle = .legacy
+
+        NotificationCenter.default.post(
+            name: NSScroller.preferredScrollerStyleDidChangeNotification,
+            object: nil
+        )
+
+        #expect(sut.scrollView.scrollerStyle == .overlay)
+    }
 }

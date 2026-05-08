@@ -15,7 +15,7 @@ private class FlippedView: NSView {
 
 /// NSScrollView subclass that only intercepts hits on its scroller.
 /// All other hits pass through to the surfaceView underneath.
-private class OverlayScrollView: NSScrollView {
+class OverlayScrollView: NSScrollView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         if let scroller = verticalScroller, !scroller.isHidden {
             let scrollerPoint = scroller.convert(point, from: superview)
@@ -99,7 +99,7 @@ class SurfaceScrollView: NSView {
 
     // MARK: - Instance Properties
 
-    private let scrollView = OverlayScrollView()
+    let scrollView = OverlayScrollView()
     private let documentContentView = FlippedView() // documentView
     private(set) var surfaceView: SurfaceView
 
@@ -119,6 +119,7 @@ class SurfaceScrollView: NSView {
 
     private var cellSizeObserver: NSObjectProtocol?
     private var configChangeObserver: NSObjectProtocol?
+    private var scrollerStyleObserver: NSObjectProtocol?
 
     private var searchBar: SearchBarView?
     private var startSearchObserver: NSObjectProtocol?
@@ -164,6 +165,7 @@ class SurfaceScrollView: NSView {
             pendingScrollRow = nil
             if let obs = cellSizeObserver { NotificationCenter.default.removeObserver(obs) }
             if let obs = configChangeObserver { NotificationCenter.default.removeObserver(obs) }
+            if let obs = scrollerStyleObserver { NotificationCenter.default.removeObserver(obs) }
             if let obs = startSearchObserver { NotificationCenter.default.removeObserver(obs) }
             if let obs = endSearchObserver { NotificationCenter.default.removeObserver(obs) }
             if let obs = searchTotalObserver { NotificationCenter.default.removeObserver(obs) }
@@ -249,11 +251,32 @@ class SurfaceScrollView: NSView {
                 }
             }
         }
+
+        // Override macOS's mouse-connected default of legacy (thick) style.
+        // Synchronous (queue: nil) so we override before AppKit paints the legacy style.
+        scrollerStyleObserver = NotificationCenter.default.addObserver(
+            forName: NSScroller.preferredScrollerStyleDidChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleScrollerStyleChange()
+            }
+        }
     }
 
     private func applyScrollbarConfig() {
         let mode = GhosttyAppController.shared.configManager.scrollbarMode
         scrollView.hasVerticalScroller = (mode == .system)
+    }
+
+    private func handleScrollerStyleChange() {
+        // Surface and scroll view are siblings (not nested), and surfaceView.frame
+        // is bound to our own bounds — not scrollView.contentSize. So a scroller
+        // width change doesn't shrink surfaceView, and no pty resize is needed.
+        // (Ghostty upstream needs synchronizeCoreSurface() because their surfaceView
+        // is nested inside scrollView's documentView.)
+        scrollView.scrollerStyle = .overlay
     }
 
     // MARK: - Layout
