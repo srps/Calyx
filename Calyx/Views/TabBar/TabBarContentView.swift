@@ -30,7 +30,35 @@ struct TabBarContentView: View {
                                     isActive: tab.id == activeTabID,
                                     onSelected: { onTabSelected?(tab.id) },
                                     onClose: { onCloseTab?(tab.id) },
-                                    onTabRenamed: onTabRenamed
+                                    onTabRenamed: onTabRenamed,
+                                    onDragChanged: { translation in
+                                        // Tab reorder: equivalent to the
+                                        // former SwiftUI `DragGesture.onChanged`,
+                                        // but driven by `ClickContainerNSView`
+                                        // so no `PlatformGroupContainer`
+                                        // compositing layer is created on top
+                                        // of the tab.
+                                        guard tabs.count > 1, onMoveTab != nil else { return }
+                                        if reorderState.draggedTabID == nil {
+                                            reorderState.draggedTabID = tab.id
+                                            reorderState.draggedTabIndex = index
+                                        }
+                                        reorderState.dragOffset = translation.width
+                                        if let frame = reorderState.tabFrames[tab.id] {
+                                            let midpoint = frame.midX + translation.width
+                                            reorderState.updateInsertionSlot(dragMidpoint: midpoint, axis: .horizontal)
+                                        }
+                                    },
+                                    onDragEnded: {
+                                        let moveFrom = reorderState.draggedTabIndex
+                                        let moveTo = moveFrom.flatMap { reorderState.destinationIndex(fromIndex: $0, tabCount: tabs.count) }
+                                        withAnimation(.easeOut(duration: 0.15)) {
+                                            reorderState.reset()
+                                        }
+                                        if let from = moveFrom, let to = moveTo {
+                                            onMoveTab?(from, to)
+                                        }
+                                    }
                                 )
                                 .id(tab.id)
                                 .background(
@@ -45,7 +73,16 @@ struct TabBarContentView: View {
                                 .zIndex(reorderState.draggedTabID == tab.id ? 1 : 0)
                                 .scaleEffect(reorderState.draggedTabID == tab.id ? 1.03 : 1.0)
                                 .shadow(color: .black.opacity(reorderState.draggedTabID == tab.id ? 0.15 : 0), radius: 8)
-                                .gesture(tabDragGesture(index: index, tab: tab))
+                                // NOTE: `.gesture(tabDragGesture(...))` was
+                                // removed here. SwiftUI's gesture machinery
+                                // synthesizes a `PlatformGroupContainer`
+                                // ancestor whose `mouseDown` is a no-op, and
+                                // that layer was intercepting clicks before
+                                // they could reach `ClickContainerNSView`.
+                                // Drag tracking is now handled inside
+                                // `ClickContainerNSView` via `mouseDragged`
+                                // / `mouseUp`, see `onDragChanged` /
+                                // `onDragEnded` above.
                                 .accessibilityValue(AccessibilityID.TabBar.tabAtIndex(index))
                             }
                         }
@@ -95,34 +132,6 @@ struct TabBarContentView: View {
         .modifier(TabBarBackgroundModifier(reduceTransparency: reduceTransparency))
         .clipped(antialiased: false)
         .accessibilityIdentifier(AccessibilityID.TabBar.container)
-    }
-
-    // MARK: - Drag Gesture
-
-    private func tabDragGesture(index: Int, tab: Tab) -> some Gesture {
-        DragGesture(minimumDistance: 5)
-            .onChanged { value in
-                guard tabs.count > 1, onMoveTab != nil else { return }
-                if reorderState.draggedTabID == nil {
-                    reorderState.draggedTabID = tab.id
-                    reorderState.draggedTabIndex = index
-                }
-                reorderState.dragOffset = value.translation.width
-                if let frame = reorderState.tabFrames[tab.id] {
-                    let midpoint = frame.midX + value.translation.width
-                    reorderState.updateInsertionSlot(dragMidpoint: midpoint, axis: .horizontal)
-                }
-            }
-            .onEnded { _ in
-                let moveFrom = reorderState.draggedTabIndex
-                let moveTo = moveFrom.flatMap { reorderState.destinationIndex(fromIndex: $0, tabCount: tabs.count) }
-                withAnimation(.easeOut(duration: 0.15)) {
-                    reorderState.reset()
-                }
-                if let from = moveFrom, let to = moveTo {
-                    onMoveTab?(from, to)
-                }
-            }
     }
 
     // MARK: - Insertion Indicator
@@ -346,81 +355,122 @@ private struct TabItemButton: View {
     var onSelected: (() -> Void)?
     var onClose: (() -> Void)?
     var onTabRenamed: (() -> Void)?
+    var onDragChanged: ((CGSize) -> Void)?
+    var onDragEnded: (() -> Void)?
     @State private var isHovering = false
     @State private var isEditing = false
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         let visibleTitle = tab.titleOverride ?? tab.title
+        let closeIsActive = (isHovering || isActive) && !isEditing
 
-        HStack(spacing: 6) {
-            if isEditing {
-                InlineTextField(
-                    initialText: visibleTitle.isEmpty ? fallbackTitle : visibleTitle,
-                    accessibilityID: AccessibilityID.TabBar.tabNameTextField(tab.id),
-                    fontSize: 12.5,
-                    fontWeight: isActive ? .semibold : .medium,
-                    onCommit: { text in
-                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        tab.titleOverride = trimmed.isEmpty ? nil : trimmed
-                        isEditing = false
-                        onTabRenamed?()
-                    },
-                    onCancel: {
-                        isEditing = false
-                    }
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Text(visibleTitle.isEmpty ? fallbackTitle : visibleTitle)
-                    .lineLimit(1)
-                    .font(.system(size: 12.5, weight: isActive ? .semibold : .medium, design: .rounded))
-                    .tracking(0.18)
-                    .foregroundStyle(isActive ? .primary : .secondary)
+        // AppKit-native click container. The hosting NSView owns the
+        // SwiftUI tab content as a subview, so `mouseDown(with:)` fires
+        // *before* SwiftUI's `.contentShape` claims the hit. This
+        // eliminates the ~500 ms `NSEvent.doubleClickInterval` wait that
+        // a SwiftUI `onTapGesture` + `TapGesture(count: 2)` combination
+        // would force.
+        //
+        // CLOSE BUTTON (geometry-only, no SwiftUI Button):
+        // The close button is rendered as a visual-only
+        // `Image(systemName: "xmark")` inside the HStack. Click hit
+        // detection happens entirely in `ClickContainerNSView.mouseDown`
+        // by computing a 16x16 right-aligned rect inset 14pt from the
+        // trailing edge and matching it against the press location.
+        // When `closeButtonEnabled` is true and the press lands inside
+        // that rect, `onClose` fires directly. This avoids the unstable
+        // SwiftUI `Button` dispatch path (`PlatformGroupContainer`) that
+        // previously ate roughly half of the close-click events.
+        TabClickContainer(
+            isEnabled: !isEditing,
+            onSingleClick: {
+                onSelected?()
+            },
+            onDoubleClick: {
+                isEditing = true
+            },
+            onClose: {
+                onClose?()
+            },
+            closeButtonEnabled: closeIsActive,
+            closeButtonInsetFromTrailing: 14,
+            closeButtonSize: 16,
+            onDragChanged: { translation in
+                onDragChanged?(translation)
+            },
+            onDragEnded: {
+                onDragEnded?()
+            }
+        ) {
+            HStack(spacing: 6) {
+                if isEditing {
+                    InlineTextField(
+                        initialText: visibleTitle.isEmpty ? fallbackTitle : visibleTitle,
+                        accessibilityID: AccessibilityID.TabBar.tabNameTextField(tab.id),
+                        fontSize: 12.5,
+                        fontWeight: isActive ? .semibold : .medium,
+                        onCommit: { text in
+                            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            tab.titleOverride = trimmed.isEmpty ? nil : trimmed
+                            isEditing = false
+                            onTabRenamed?()
+                        },
+                        onCancel: {
+                            isEditing = false
+                        }
+                    )
                     .frame(maxWidth: .infinity, alignment: .leading)
-            }
+                } else {
+                    Text(visibleTitle.isEmpty ? fallbackTitle : visibleTitle)
+                        .lineLimit(1)
+                        .font(.system(size: 12.5, weight: isActive ? .semibold : .medium, design: .rounded))
+                        .tracking(0.18)
+                        .foregroundStyle(isActive ? .primary : .secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
-            if tab.unreadNotifications > 0 {
-                Text(tab.unreadNotifications > 99 ? "99+" : "\(tab.unreadNotifications)")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule()
-                            .fill(
-                                Color.red
-                            )
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.white.opacity(0.22), lineWidth: 1)
-                    )
-            }
+                if tab.unreadNotifications > 0 {
+                    Text(tab.unreadNotifications > 99 ? "99+" : "\(tab.unreadNotifications)")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(
+                                    Color.red
+                                )
+                        )
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.22), lineWidth: 1)
+                        )
+                }
 
-            Button(action: { onClose?() }) {
+                // Visual-only close icon. No `.onTapGesture`, no
+                // `Button`. Hit detection is done in
+                // `ClickContainerNSView.mouseDown` against the same
+                // 16x16 rect inset 14pt from the trailing edge.
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(isActive ? .secondary : .tertiary)
                     .frame(width: 16, height: 16)
+                    .opacity(closeIsActive ? 1 : 0)
+                    .closeButtonHoverHighlight(size: 16, isVisible: closeIsActive)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier(AccessibilityID.TabBar.tabCloseButton(tab.id))
             }
-            .buttonStyle(.plain)
-            .closeButtonHoverHighlight(size: 16, isVisible: (isHovering || isActive) && !isEditing)
-            .opacity(isHovering || isActive ? 1 : 0)
-            .allowsHitTesting((isHovering || isActive) && !isEditing)
-            .accessibilityIdentifier(AccessibilityID.TabBar.tabCloseButton(tab.id))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
+            .frame(minWidth: 72, maxWidth: 180)
+            .contentShape(Rectangle())
+            .modifier(TabChromeModifier(
+                isActive: isActive,
+                cornerRadius: 8,
+                reduceTransparency: reduceTransparency
+            ))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 4)
-        .frame(minWidth: 72, maxWidth: 180)
-        .contentShape(Rectangle())
-        .onTapGesture { if !isEditing { onSelected?() } }
-        .highPriorityGesture(TapGesture(count: 2).onEnded { if !isEditing { isEditing = true } })
-        .modifier(TabChromeModifier(
-            isActive: isActive,
-            cornerRadius: 8,
-            reduceTransparency: reduceTransparency
-        ))
         .onHover { isHovering = $0 }
         .accessibilityIdentifier(AccessibilityID.TabBar.tab(tab.id))
         .accessibilityLabel(visibleTitle.isEmpty ? fallbackTitle : visibleTitle)

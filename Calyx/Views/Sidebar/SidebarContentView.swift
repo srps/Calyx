@@ -222,9 +222,14 @@ private struct GroupSectionView: View {
                     groupColor: group.color
                 ))
             } else {
-                HStack(spacing: 0) {
-                    // Left: group selection area
-                    Button(action: { onGroupSelected?(group.id) }) {
+                TabClickContainer(
+                    isEnabled: !isEditing,
+                    onSingleClick: { onGroupSelected?(group.id) },
+                    onDoubleClick: { isEditing = true }
+                ) {
+                    HStack(spacing: 0) {
+                        // Left: group name area (visual content only; click
+                        // handled by surrounding TabClickContainer)
                         HStack(spacing: 6) {
                             Circle()
                                 .fill(Color(nsColor: group.color.nsColor))
@@ -240,50 +245,48 @@ private struct GroupSectionView: View {
                         }
                         .padding(.vertical, 10)
                         .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
 
-                    // Close all tabs button (shown on hover)
-                    Button(action: { onCloseAllTabsInGroup?(group.id) }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .opacity(isHoveringHeader ? 1 : 0)
-                            .frame(width: 20, height: 20)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .allowsHitTesting(isHoveringHeader)
-                    .closeButtonHoverHighlight(size: 20, isVisible: isHoveringHeader, hoverOpacity: 0.08)
-                    .accessibilityIdentifier(AccessibilityID.Sidebar.groupCloseAllButton(group.id))
-
-                    // Right: collapse toggle button
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            group.isCollapsed.toggle()
+                        // Close all tabs button (shown on hover)
+                        Button(action: { onCloseAllTabsInGroup?(group.id) }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .opacity(isHoveringHeader ? 1 : 0)
+                                .frame(width: 20, height: 20)
+                                .contentShape(Rectangle())
                         }
-                        onCollapseToggled?()
-                    }) {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(group.isCollapsed ? .zero : .degrees(90))
-                            .frame(width: 20, height: 20)
-                            .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .allowsHitTesting(isHoveringHeader)
+                        .closeButtonHoverHighlight(size: 20, isVisible: isHoveringHeader, hoverOpacity: 0.08)
+                        .accessibilityIdentifier(AccessibilityID.Sidebar.groupCloseAllButton(group.id))
+
+                        // Right: collapse toggle button
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                group.isCollapsed.toggle()
+                            }
+                            onCollapseToggled?()
+                        }) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .rotationEffect(group.isCollapsed ? .zero : .degrees(90))
+                                .frame(width: 20, height: 20)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier(AccessibilityID.Sidebar.groupCollapseButton(group.id))
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier(AccessibilityID.Sidebar.groupCollapseButton(group.id))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .modifier(GroupHeaderBackgroundModifier(
+                        isActiveGroup: isActiveGroup,
+                        reduceTransparency: reduceTransparency,
+                        groupColor: group.color
+                    ))
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .modifier(GroupHeaderBackgroundModifier(
-                    isActiveGroup: isActiveGroup,
-                    reduceTransparency: reduceTransparency,
-                    groupColor: group.color
-                ))
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier(AccessibilityID.Sidebar.group(group.id))
-                .highPriorityGesture(TapGesture(count: 2).onEnded { isEditing = true })
                 .onAssumeInsideHover($isHoveringHeader)
             }
 
@@ -296,7 +299,34 @@ private struct GroupSectionView: View {
                             isActive: tab.id == activeTabID && isActiveGroup,
                             onSelected: { onTabSelected?(tab.id) },
                             onClose: { onCloseTab?(tab.id) },
-                            onTabRenamed: onTabRenamed
+                            onTabRenamed: onTabRenamed,
+                            onDragChanged: { translation in
+                                // Tab reorder: equivalent to the former
+                                // SwiftUI `DragGesture.onChanged`, but
+                                // driven by `ClickContainerNSView` so no
+                                // `PlatformGroupContainer` compositing
+                                // layer is created on top of the row.
+                                guard group.tabs.count > 1, onMoveTab != nil else { return }
+                                if reorderState.draggedTabID == nil {
+                                    reorderState.draggedTabID = tab.id
+                                    reorderState.draggedTabIndex = index
+                                }
+                                reorderState.dragOffset = translation.height
+                                if let frame = reorderState.tabFrames[tab.id] {
+                                    let midpoint = frame.midY + translation.height
+                                    reorderState.updateInsertionSlot(dragMidpoint: midpoint, axis: .vertical)
+                                }
+                            },
+                            onDragEnded: {
+                                let moveFrom = reorderState.draggedTabIndex
+                                let moveTo = moveFrom.flatMap { reorderState.destinationIndex(fromIndex: $0, tabCount: group.tabs.count) }
+                                withAnimation(.easeOut(duration: 0.15)) {
+                                    reorderState.reset()
+                                }
+                                if let from = moveFrom, let to = moveTo {
+                                    onMoveTab?(group.id, from, to)
+                                }
+                            }
                         )
                         .background(
                             GeometryReader { geo in
@@ -310,7 +340,11 @@ private struct GroupSectionView: View {
                         .zIndex(reorderState.draggedTabID == tab.id ? 1 : 0)
                         .scaleEffect(reorderState.draggedTabID == tab.id ? 1.03 : 1.0)
                         .shadow(color: .black.opacity(reorderState.draggedTabID == tab.id ? 0.15 : 0), radius: 8)
-                        .gesture(tabDragGesture(index: index, tab: tab))
+                        // NOTE: `.gesture(tabDragGesture(...))` was removed
+                        // here. Drag tracking now happens inside
+                        // `ClickContainerNSView` via `mouseDragged` /
+                        // `mouseUp` to avoid a `PlatformGroupContainer`
+                        // compositing layer that would intercept clicks.
                         .accessibilityValue(AccessibilityID.Sidebar.tabAtIndex(group.id, index))
                     }
                 }
@@ -330,34 +364,6 @@ private struct GroupSectionView: View {
         .onChange(of: group.tabs.map(\.id)) { _, _ in
             reorderState.reset()
         }
-    }
-
-    // MARK: - Drag Gesture
-
-    private func tabDragGesture(index: Int, tab: Tab) -> some Gesture {
-        DragGesture(minimumDistance: 5)
-            .onChanged { value in
-                guard group.tabs.count > 1, onMoveTab != nil else { return }
-                if reorderState.draggedTabID == nil {
-                    reorderState.draggedTabID = tab.id
-                    reorderState.draggedTabIndex = index
-                }
-                reorderState.dragOffset = value.translation.height
-                if let frame = reorderState.tabFrames[tab.id] {
-                    let midpoint = frame.midY + value.translation.height
-                    reorderState.updateInsertionSlot(dragMidpoint: midpoint, axis: .vertical)
-                }
-            }
-            .onEnded { _ in
-                let moveFrom = reorderState.draggedTabIndex
-                let moveTo = moveFrom.flatMap { reorderState.destinationIndex(fromIndex: $0, tabCount: group.tabs.count) }
-                withAnimation(.easeOut(duration: 0.15)) {
-                    reorderState.reset()
-                }
-                if let from = moveFrom, let to = moveTo {
-                    onMoveTab?(group.id, from, to)
-                }
-            }
     }
 
     // MARK: - Insertion Indicator
@@ -439,6 +445,8 @@ private struct TabRowItemView: View {
     var onSelected: (() -> Void)?
     var onClose: (() -> Void)?
     var onTabRenamed: (() -> Void)?
+    var onDragChanged: ((CGSize) -> Void)?
+    var onDragEnded: (() -> Void)?
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var isEditing = false
     @State private var isHovering = false
@@ -457,63 +465,93 @@ private struct TabRowItemView: View {
 
     var body: some View {
         let displayText = visibleTitle.isEmpty ? fallbackTitle : visibleTitle
+        let closeIsActive = (isHovering || isActive) && !isEditing
 
-        HStack(spacing: 4) {
-            Image(systemName: tabIcon)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if isEditing {
-                InlineTextField(
-                    initialText: displayText,
-                    accessibilityID: AccessibilityID.Sidebar.tabNameTextField(tab.id),
-                    fontSize: 12.5,
-                    fontWeight: .semibold,
-                    onCommit: { text in
-                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        tab.titleOverride = trimmed.isEmpty ? nil : trimmed
-                        isEditing = false
-                        onTabRenamed?()
-                    },
-                    onCancel: {
-                        isEditing = false
-                    }
-                )
-            } else {
-                Text(displayText)
-                    .lineLimit(1)
-                    .font(.system(size: 12.5, weight: isActive ? .semibold : .medium, design: .rounded))
+        // CLOSE BUTTON (geometry-only, no SwiftUI Button):
+        // The close button is rendered as a visual-only
+        // `Image(systemName: "xmark")` inside the HStack. Click hit
+        // detection happens entirely in `ClickContainerNSView.mouseDown`
+        // by computing a 16x16 right-aligned rect inset 14pt from the
+        // trailing edge and matching it against the press location.
+        // When `closeButtonEnabled` is true and the press lands inside
+        // that rect, `onClose` fires directly. See the matching comment
+        // in `TabItemButton` for the full rationale.
+        TabClickContainer(
+            isEnabled: !isEditing,
+            onSingleClick: {
+                onSelected?()
+            },
+            onDoubleClick: {
+                isEditing = true
+            },
+            onClose: {
+                onClose?()
+            },
+            closeButtonEnabled: closeIsActive,
+            closeButtonInsetFromTrailing: 14,
+            closeButtonSize: 16,
+            onDragChanged: { translation in
+                onDragChanged?(translation)
+            },
+            onDragEnded: {
+                onDragEnded?()
             }
-            Spacer()
-            if tab.unreadNotifications > 0 {
-                Text(tab.unreadNotifications > 99 ? "99+" : "\(tab.unreadNotifications)")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(minWidth: 16, minHeight: 16)
-                    .background(Circle().fill(Color.red))
-            }
-            Button(action: { onClose?() }) {
+        ) {
+            HStack(spacing: 4) {
+                Image(systemName: tabIcon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if isEditing {
+                    InlineTextField(
+                        initialText: displayText,
+                        accessibilityID: AccessibilityID.Sidebar.tabNameTextField(tab.id),
+                        fontSize: 12.5,
+                        fontWeight: .semibold,
+                        onCommit: { text in
+                            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            tab.titleOverride = trimmed.isEmpty ? nil : trimmed
+                            isEditing = false
+                            onTabRenamed?()
+                        },
+                        onCancel: {
+                            isEditing = false
+                        }
+                    )
+                } else {
+                    Text(displayText)
+                        .lineLimit(1)
+                        .font(.system(size: 12.5, weight: isActive ? .semibold : .medium, design: .rounded))
+                }
+                Spacer()
+                if tab.unreadNotifications > 0 {
+                    Text(tab.unreadNotifications > 99 ? "99+" : "\(tab.unreadNotifications)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 16, minHeight: 16)
+                        .background(Circle().fill(Color.red))
+                }
+                // Visual-only close icon. No `.onTapGesture`, no
+                // `Button`. Hit detection is done in
+                // `ClickContainerNSView.mouseDown` against the same
+                // 16x16 rect inset 14pt from the trailing edge.
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(isActive ? .secondary : .tertiary)
-                    .opacity(isHovering || isActive ? 1 : 0)
                     .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
+                    .opacity(closeIsActive ? 1 : 0)
+                    .closeButtonHoverHighlight(size: 16, isVisible: closeIsActive)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier(AccessibilityID.Sidebar.tabCloseButton(tab.id))
             }
-            .buttonStyle(.plain)
-            .closeButtonHoverHighlight(size: 16, isVisible: (isHovering || isActive) && !isEditing)
-            .allowsHitTesting((isHovering || isActive) && !isEditing)
-            .accessibilityIdentifier(AccessibilityID.Sidebar.tabCloseButton(tab.id))
+            .contentShape(Rectangle())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .modifier(TabChromeModifier(
+                isActive: isActive,
+                cornerRadius: 12,
+                reduceTransparency: reduceTransparency
+            ))
         }
-        .contentShape(Rectangle())
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .modifier(TabChromeModifier(
-            isActive: isActive,
-            cornerRadius: 12,
-            reduceTransparency: reduceTransparency
-        ))
-        .onTapGesture { if !isEditing { onSelected?() } }
-        .highPriorityGesture(TapGesture(count: 2).onEnded { if !isEditing { isEditing = true } })
         .onAssumeInsideHover($isHovering)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AccessibilityID.Sidebar.tab(tab.id))
